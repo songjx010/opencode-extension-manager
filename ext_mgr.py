@@ -191,7 +191,17 @@ class SymlinkManager:
         source, target = self._resolve_path(ext_name)
         self._ensure_subdir(os.path.dirname(target))
 
-        if os.path.exists(target) or os.path.islink(target):
+        if os.path.islink(target):
+            existing = os.readlink(target)
+            if os.path.abspath(existing) == os.path.abspath(source):
+                return {"name": ext_name, "status": "skipped", "detail": ""}
+            return {
+                "name": ext_name,
+                "status": "conflict",
+                "detail": f"符号链接已指向 {existing}",
+            }
+
+        if os.path.exists(target):
             return {
                 "name": ext_name,
                 "status": "conflict",
@@ -205,10 +215,24 @@ class SymlinkManager:
             return {"name": ext_name, "status": "error", "detail": str(e)}
 
     def remove_symlink(self, ext_name: str) -> dict:
-        _, target = self._resolve_path(ext_name)
+        source, target = self._resolve_path(ext_name)
 
-        if not os.path.exists(target) and not os.path.islink(target):
-            return {"name": ext_name, "status": "skipped", "detail": "符号链接不存在"}
+        if not os.path.islink(target):
+            if not os.path.exists(target):
+                return {"name": ext_name, "status": "skipped", "detail": ""}
+            return {
+                "name": ext_name,
+                "status": "conflict",
+                "detail": f"目标路径 {target} 存在但非符号链接",
+            }
+
+        existing = os.readlink(target)
+        if os.path.abspath(existing) != os.path.abspath(source):
+            return {
+                "name": ext_name,
+                "status": "conflict",
+                "detail": f"符号链接指向 {existing}，非预期目标",
+            }
 
         try:
             os.unlink(target)
@@ -367,7 +391,7 @@ class DialogAdapter:
         term_h, term_w = DialogAdapter._term_size()
         h = max(term_h - 4, 20)
         w = max(term_w - 10, 70)
-        args = ["dialog", "--stdout", "--msgbox", text, str(h), str(w)]
+        args = ["dialog", "--stdout", "--colors", "--msgbox", text, str(h), str(w)]
         try:
             result = subprocess.run(
                 args, capture_output=True, text=True, env=os.environ.copy()
@@ -381,7 +405,7 @@ class DialogAdapter:
         term_h, term_w = DialogAdapter._term_size()
         h = max(term_h - 4, 20)
         w = max(term_w - 10, 70)
-        args = ["dialog", "--stdout", "--yesno", text, str(h), str(w)]
+        args = ["dialog", "--stdout", "--colors", "--yesno", text, str(h), str(w)]
         try:
             result = subprocess.run(
                 args, capture_output=True, text=True, env=os.environ.copy()
@@ -560,20 +584,47 @@ class DialogUI:
             return "back"
 
     def show_change_summary(self, changes: dict) -> bool:
-        lines = ["变更摘要:\n"]
+        lines = ["\\Zb\\Z4变更摘要:\\Zn\n"]
         if changes.get("to_enable"):
-            lines.append("启用: " + ", ".join(changes["to_enable"]))
+            lines.append("\\Zb\\Z5启用:\\Zn")
+            for n in changes["to_enable"]:
+                lines.append(f"  + {n}")
         if changes.get("to_disable"):
-            lines.append("禁用: " + ", ".join(changes["to_disable"]))
+            lines.append("")
+            lines.append("\\Zb\\Z1禁用:\\Zn")
+            for n in changes["to_disable"]:
+                lines.append(f"  - {n}")
         if changes.get("rejected"):
             for r in changes["rejected"]:
                 lines.append(f"拒绝禁用 {r['name']}: {r['reason']} ({', '.join(r.get('dependents', []))})")
         return self._adapter.run_yesno("确认", "\n".join(lines)) == 0
 
     def show_results(self, results: list) -> None:
-        lines = []
+        ok_status = {"success", "ok"}
+        skip_status = {"skipped"}
+        groups = {"ok": [], "fail": [], "skip": []}
         for r in results:
-            lines.append(f"{r['name']}: {r['status']}")
+            if r["status"] in ok_status:
+                groups["ok"].append(r)
+            elif r["status"] in skip_status:
+                groups["skip"].append(r)
+            else:
+                groups["fail"].append(r)
+        ordered = groups["ok"] + groups["fail"] + groups["skip"]
+        max_name_w = max((len(r["name"]) for r in ordered if r["name"]), default=0)
+        lines = []
+        for key in ("ok", "fail", "skip"):
+            if lines and groups[key]:
+                lines.append("")
+            for r in groups[key]:
+                name = (r["name"] or "(全部)").ljust(max_name_w)
+                if r["status"] in ok_status:
+                    color = "\\Zb\\Z4"
+                elif r["status"] in skip_status:
+                    color = "\\Zb\\Z5"
+                else:
+                    color = "\\Zb\\Z1"
+                lines.append(f"{name}\t{color}{r['status']}\\Zn")
         self._adapter.run_msgbox("操作结果", "\n".join(lines))
 
     def show_validation_results(self, results: list) -> None:
