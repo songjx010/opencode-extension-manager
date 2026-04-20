@@ -3,6 +3,7 @@
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -281,12 +282,58 @@ class Validator:
 
 class DialogAdapter:
     @staticmethod
+    def _term_size() -> tuple:
+        try:
+            cols = int(subprocess.run(
+                ["tput", "cols"], capture_output=True, text=True
+            ).stdout.strip())
+            lines = int(subprocess.run(
+                ["tput", "lines"], capture_output=True, text=True
+            ).stdout.strip())
+            return max(lines, 24), max(cols, 80)
+        except (ValueError, FileNotFoundError):
+            return 24, 80
+
+    @staticmethod
+    def run_menu(title: str, items: list) -> tuple:
+        term_h, term_w = DialogAdapter._term_size()
+        h = min(len(items) + 8, max(term_h - 4, 20))
+        w = max(term_w - 10, 70)
+        menu_h = min(len(items) + 2, h - 8)
+        y = max((term_h - h) // 2, 0)
+        x = max((term_w - w) // 2, 0)
+        args = [
+            "dialog", "--stdout", "--colors",
+            "--begin", str(y), str(x),
+            "--menu", title, str(h), str(w), str(menu_h),
+        ]
+        for tag, text in items:
+            args.extend([tag, text])
+        try:
+            result = subprocess.run(
+                args, capture_output=True, text=True, env=os.environ.copy()
+            )
+            if result.returncode == 0:
+                return 0, result.stdout.strip()
+            return result.returncode, ""
+        except FileNotFoundError:
+            return -1, ""
+
+    @staticmethod
     def run_checklist(
-        title: str, items: list, height: int = 20, width: int = 70
+        title: str, items: list, unavailable: set = None
     ) -> tuple:
-        args = ["dialog", "--checklist", title, str(height), str(width), str(height)]
-        for tag, status, text in items:
-            args.extend([tag, text, "on" if status else "off"])
+        term_h, term_w = DialogAdapter._term_size()
+        h = max(term_h - 4, 20)
+        w = max(term_w - 10, 70)
+        list_h = min(len(items) + 2, h - 8)
+        unavailable = unavailable or set()
+        args = [
+            "dialog", "--stdout", "--item-help", "--colors",
+            "--checklist", title, str(h), str(w), str(list_h),
+        ]
+        for tag, status, text, help_text in items:
+            args.extend([tag, text, "on" if status else "off", help_text])
         try:
             result = subprocess.run(
                 args, capture_output=True, text=True, env=os.environ.copy()
@@ -294,14 +341,17 @@ class DialogAdapter:
             if result.returncode == 0:
                 raw = result.stdout.strip()
                 selected = [s.strip('"') for s in raw.split()] if raw else []
-                return 0, selected
-            return result.returncode, []
+                invalid = [s for s in selected if s in unavailable]
+                return 0, selected, invalid
+            return result.returncode, [], []
         except FileNotFoundError:
-            return -1, []
+            return -1, [], []
 
     @staticmethod
     def run_inputbox(title: str, default: str = "") -> tuple:
-        args = ["dialog", "--inputbox", title, "8", "60", default]
+        _, term_w = DialogAdapter._term_size()
+        w = max(term_w - 10, 60)
+        args = ["dialog", "--stdout", "--inputbox", title, "8", str(w), default]
         try:
             result = subprocess.run(
                 args, capture_output=True, text=True, env=os.environ.copy()
@@ -314,7 +364,10 @@ class DialogAdapter:
 
     @staticmethod
     def run_msgbox(title: str, text: str) -> int:
-        args = ["dialog", "--msgbox", text, "20", "70"]
+        term_h, term_w = DialogAdapter._term_size()
+        h = max(term_h - 4, 20)
+        w = max(term_w - 10, 70)
+        args = ["dialog", "--stdout", "--msgbox", text, str(h), str(w)]
         try:
             result = subprocess.run(
                 args, capture_output=True, text=True, env=os.environ.copy()
@@ -325,7 +378,10 @@ class DialogAdapter:
 
     @staticmethod
     def run_yesno(title: str, text: str) -> int:
-        args = ["dialog", "--yesno", text, "20", "70"]
+        term_h, term_w = DialogAdapter._term_size()
+        h = max(term_h - 4, 20)
+        w = max(term_w - 10, 70)
+        args = ["dialog", "--stdout", "--yesno", text, str(h), str(w)]
         try:
             result = subprocess.run(
                 args, capture_output=True, text=True, env=os.environ.copy()
@@ -336,7 +392,10 @@ class DialogAdapter:
 
     @staticmethod
     def run_textbox(title: str, text: str) -> int:
-        args = ["dialog", "--textbox", text, "20", "70"]
+        term_h, term_w = DialogAdapter._term_size()
+        h = max(term_h - 4, 20)
+        w = max(term_w - 10, 70)
+        args = ["dialog", "--stdout", "--textbox", text, str(h), str(w)]
         try:
             result = subprocess.run(
                 args, capture_output=True, text=True, env=os.environ.copy()
@@ -347,10 +406,74 @@ class DialogAdapter:
 
 
 class DialogUI:
-    def __init__(self, adapter: DialogAdapter, config_manager: ConfigManager):
+    CATEGORY_LABELS = {
+        "skills": "Skills  — 技能扩展",
+        "agents": "Agents — 智能体",
+        "commands": "Commands — 命令编排",
+    }
+    CATEGORY_ORDER = ["skills", "agents", "commands"]
+
+    def __init__(self, adapter: DialogAdapter, config_manager: ConfigManager, source_dir: str):
         self._adapter = adapter
         self._config = config_manager
+        self._source_dir = source_dir
         self._target_dir = os.path.expanduser("~/.config/opencode")
+
+    @staticmethod
+    def _visible_len(s: str) -> int:
+        return len(re.sub(r'\\Z[b0-7rR]', '', s))
+
+    def _pad_label(self, label: str, width: int) -> str:
+        pad = width - self._visible_len(label)
+        return label + " " * max(pad, 1)
+
+    def _check_availability(self, name: str, extensions: dict) -> list:
+        missing = []
+        path = os.path.join(self._source_dir, name)
+        if not os.path.exists(path):
+            missing.append(name)
+        for dep in extensions.get(name, {}).get("depends", []):
+            dep_path = os.path.join(self._source_dir, dep)
+            if not os.path.exists(dep_path):
+                missing.append(dep)
+        return missing
+
+    def _build_checklist_items(self, extensions: dict, category: str) -> tuple:
+        items = []
+        unavailable = set()
+        for name, ext in extensions.items():
+            if not name.startswith(category + "/"):
+                continue
+            missing = self._check_availability(name, extensions)
+            if missing:
+                unavailable.add(name)
+                mark = "\\Zr !! \\ZR"
+                dep_missing = [d for d in missing if d != name]
+                help_text = "扩展文件不存在"
+                if any(d == name for d in missing) and dep_missing:
+                    help_text = "扩展文件不存在, 依赖: " + ", ".join(dep_missing)
+                elif dep_missing:
+                    help_text = "缺失依赖: " + ", ".join(dep_missing)
+            else:
+                mark = "\\Zb\\Z2 OK \\Zn"
+                help_text = ext.get("description", "")
+            text = f"{mark} {ext.get('description', '')}"
+            items.append((name, ext.get("enabled", False), text, help_text))
+        return items, unavailable
+
+    def _count_stats(self, extensions: dict, category: str) -> tuple:
+        total = 0
+        ok = 0
+        enabled = 0
+        for name, ext in extensions.items():
+            if not name.startswith(category + "/"):
+                continue
+            total += 1
+            if ext.get("enabled", False):
+                enabled += 1
+            if not self._check_availability(name, extensions):
+                ok += 1
+        return total, enabled, ok
 
     def show_target_dir_input(self) -> str:
         code, value = self._adapter.run_inputbox("目标目录", self._target_dir)
@@ -363,13 +486,78 @@ class DialogUI:
         return self._target_dir
 
     def show_extension_list(self, extensions: dict) -> tuple:
-        items = []
-        for name, ext in extensions.items():
-            items.append((name, ext.get("enabled", False), ext.get("description", "")))
-        code, selected = self._adapter.run_checklist("扩展管理", items)
-        if code != 0:
-            return "cancel", []
-        return "ok", selected
+        while True:
+            menu_items = []
+            max_label_w = 0
+            for cat in self.CATEGORY_ORDER:
+                total, _, _ = self._count_stats(extensions, cat)
+                if total > 0:
+                    max_label_w = max(
+                        max_label_w,
+                        self._visible_len(self.CATEGORY_LABELS.get(cat, cat)),
+                    )
+            for cat in self.CATEGORY_ORDER:
+                total, enabled, ok = self._count_stats(extensions, cat)
+                if total == 0:
+                    continue
+                label = self._pad_label(self.CATEGORY_LABELS.get(cat, cat), max_label_w)
+                stats = (
+                    f"\t\\Zb\\Z1{enabled}/{total} 启用\\Zn"
+                    f"\t\\Zb\\Z5{ok}/{total} 可用\\Zn"
+                )
+                menu_items.append((cat, label + stats))
+            menu_items.append(("apply", "\\Zb\\Z2确认并应用变更\\Zn"))
+            menu_items.append(("quit", "退出"))
+
+            code, choice = self._adapter.run_menu("扩展管理", menu_items)
+            if code != 0 or choice == "quit":
+                return "cancel", []
+
+            if choice == "apply":
+                return "ok", [
+                    name for name, ext in extensions.items()
+                    if ext.get("enabled", False)
+                ]
+
+            if choice in self.CATEGORY_ORDER:
+                action = self._show_category_checklist(extensions, choice)
+                if action == "apply":
+                    return "ok", [
+                        name for name, ext in extensions.items()
+                        if ext.get("enabled", False)
+                    ]
+
+    def _show_category_checklist(self, extensions: dict, category: str) -> str:
+        items, unavailable = self._build_checklist_items(extensions, category)
+        if not items:
+            self._adapter.run_msgbox("提示", f"该分类下没有扩展")
+            return "back"
+
+        while True:
+            label = self.CATEGORY_LABELS.get(category, category)
+            title = f"{label}  (OK=齐全  !!=缺失,不可选)"
+            code, selected, invalid = self._adapter.run_checklist(
+                title, items, unavailable
+            )
+
+            if code != 0:
+                return "back"
+
+            if invalid:
+                self._adapter.run_msgbox(
+                    "错误",
+                    "以下扩展文件不完整，无法启用:\n\n"
+                    + "\n".join(f"  - {n}" for n in invalid)
+                    + "\n\n请取消勾选后重试",
+                )
+                continue
+
+            for name, ext in extensions.items():
+                if name.startswith(category + "/"):
+                    ext["enabled"] = name in selected
+
+            items, unavailable = self._build_checklist_items(extensions, category)
+            return "back"
 
     def show_change_summary(self, changes: dict) -> bool:
         lines = ["变更摘要:\n"]
@@ -417,7 +605,7 @@ def main():
     extensions = config["extensions"]
 
     adapter = DialogAdapter()
-    ui = DialogUI(adapter, config_mgr)
+    ui = DialogUI(adapter, config_mgr, script_dir)
 
     target = ui.show_target_dir_input()
     if target == "cancel":
