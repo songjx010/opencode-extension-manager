@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "extensions": {
+    "skills/ascend-c-integrated-development": {
+      "enabled": true,
+      "description": "Ascend C自定义算子全流程开发（kernel/host/ONNX插件）",
+      "depends": [
+        "agents/kernel-side-code-developer.md",
+        "agents/host-side-code-developer.md",
+        "agents/onnx-plugin-developer.md"
+      ]
+    },
+    "skills/brainstorming": {
+      "enabled": false,
+      "description": "结构化头脑风暴，创意工作前必用"
+    },
+    "skills/code-review-cpp-enhanced": {
+      "enabled": false,
+      "description": "深度C++代码检视（L1-L5五层金字塔），支持MR审查和本地审查",
+      "depends": [
+        "skills/code-review-cpp-guidelines"
+      ]
+    },
+    "skills/code-review-cpp-guidelines": {
+      "enabled": false,
+      "description": "基于华为C++编程规范的代码审查指南"
+    },
+    "agents/cpp-interface-reviewer.md": {
+      "enabled": false,
+      "description": "C++接口设计检视（参数安全/异常处理/移动语义）"
+    },
+    "commands/complex-task.md": {
+      "enabled": false,
+      "description": "编排复杂多步骤任务",
+      "depends": [
+        "skills/brainstorming",
+        "skills/diagram-generator",
+        "commands/cpp-code-review.md",
+        "commands/cpp-guideline-review.md"
+      ]
+    },
+    "commands/cpp-code-review.md": {
+      "enabled": false,
+      "description": "C++逻辑缺陷检测（内存/并发/控制流）",
+      "depends": [
+        "agents/cpp-memory-reviewer.md",
+        "agents/cpp-concurrency-reviewer.md",
+        "agents/cpp-logic-reviewer.md",
+        "agents/cpp-bug-scorer.md"
+      ]
+    },
+    "commands/cpp-guideline-review.md": {
+      "enabled": false,
+      "description": "C++编码规范审查（惯用法/接口/STL/规范评分）",
+      "depends": [
+        "agents/cpp-idiom-reviewer.md",
+        "agents/cpp-interface-reviewer.md",
+        "agents/cpp-stl-reviewer.md",
+        "agents/cpp-standards-scorer.md",
+        "references/cpp-coding-standards"
+      ]
+    }
+  }
+}
