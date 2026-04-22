@@ -158,13 +158,11 @@ class ConfigManager:
 class DependencyResolver:
     def resolve(self, selected: list, extensions: dict) -> dict:
         to_enable = set(selected)
-        to_disable = set()
 
         for name in selected:
             self._collect_deps(name, extensions, to_enable)
 
-        all_names = set(extensions.keys())
-        to_disable = all_names - to_enable
+        to_disable = set(extensions.keys()) - to_enable
 
         rejected = []
         for name in list(to_disable):
@@ -184,7 +182,8 @@ class DependencyResolver:
     def _collect_deps(self, name: str, extensions: dict, collected: set) -> None:
         if name not in extensions:
             return
-        for dep in extensions[name].get("depends", []):
+        ext_deps, _ = parse_depends(extensions[name].get("depends", []))
+        for dep in ext_deps:
             if dep not in collected and dep in extensions:
                 collected.add(dep)
                 self._collect_deps(dep, extensions, collected)
@@ -194,8 +193,10 @@ class DependencyResolver:
     ) -> list:
         dependents = []
         for ext_name, ext_data in extensions.items():
-            if ext_name in selected and name in ext_data.get("depends", []):
-                dependents.append(ext_name)
+            if ext_name in selected:
+                ext_deps, _ = parse_depends(ext_data.get("depends", []))
+                if name in ext_deps:
+                    dependents.append(ext_name)
         return sorted(dependents)
 
 

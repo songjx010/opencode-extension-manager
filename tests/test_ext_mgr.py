@@ -298,3 +298,101 @@ def test_cycle_with_path_deps_no_false_positive(tmp_path):
     p = _write_config(tmp_path, cfg)
     config = ConfigManager(p).load()
     assert config["warnings"] == []
+
+
+from ext_mgr import DependencyResolver
+
+
+def _extensions_for_resolver():
+    return {
+        "a": {
+            "type": "skill",
+            "enabled": False,
+            "description": "A",
+            "depends": ["b", {"source": "a.md", "target": "a.md"}],
+        },
+        "b": {
+            "type": "agent",
+            "enabled": False,
+            "description": "B",
+            "depends": [
+                "c",
+                {"source": "b.md", "target": "b.md"},
+            ],
+        },
+        "c": {
+            "type": "agent",
+            "enabled": False,
+            "description": "C",
+            "depends": [{"source": "c.md", "target": "c.md"}],
+        },
+        "standalone": {
+            "type": "skill",
+            "enabled": False,
+            "description": "Standalone",
+            "depends": [{"source": "s.md", "target": "s.md"}],
+        },
+    }
+
+
+def test_resolve_single_ext():
+    resolver = DependencyResolver()
+    exts = _extensions_for_resolver()
+    result = resolver.resolve(["standalone"], exts)
+    assert result["to_enable"] == ["standalone"]
+    assert "standalone" not in result["to_disable"]
+
+
+def test_resolve_with_ext_dep():
+    resolver = DependencyResolver()
+    exts = _extensions_for_resolver()
+    result = resolver.resolve(["a"], exts)
+    assert "a" in result["to_enable"]
+    assert "b" in result["to_enable"]
+
+
+def test_resolve_transitive_deps():
+    resolver = DependencyResolver()
+    exts = _extensions_for_resolver()
+    result = resolver.resolve(["a"], exts)
+    assert sorted(result["to_enable"]) == ["a", "b", "c"]
+
+
+def test_resolve_disable_no_cascade():
+    resolver = DependencyResolver()
+    exts = _extensions_for_resolver()
+    result = resolver.resolve(["a"], exts)
+    assert "standalone" in result["to_disable"]
+
+
+def test_resolve_reject_if_depended():
+    resolver = DependencyResolver()
+    exts = _extensions_for_resolver()
+    exts["a"]["enabled"] = True
+    result = resolver.resolve(["a"], exts)
+    rejected_names = [r["name"] for r in result["rejected"]]
+    assert "b" not in rejected_names
+    assert "c" not in rejected_names
+
+
+def test_resolve_ext_dep_not_in_extensions():
+    resolver = DependencyResolver()
+    exts = {
+        "a": {
+            "type": "skill",
+            "enabled": False,
+            "description": "A",
+            "depends": ["nonexistent"],
+        }
+    }
+    result = resolver.resolve(["a"], exts)
+    assert result["to_enable"] == ["a"]
+
+
+def test_resolve_all_enabled_no_disable():
+    resolver = DependencyResolver()
+    exts = _extensions_for_resolver()
+    result = resolver.resolve(["a", "standalone"], exts)
+    assert result["to_enable"] == ["a", "b", "c", "standalone"]
+    assert result["to_disable"] == []
+    assert result["rejected"] == []
