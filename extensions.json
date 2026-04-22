@@ -9,7 +9,7 @@
         "kernel-side-code-developer",
         "host-side-code-developer",
         "onnx-plugin-developer",
-        {"source": "skills/ascend-c-integrated-development.md", "target": "skills/ascend-c-integrated-development.md"}
+        {"source": "skills/ascend-c-integrated-development", "target": "skills/ascend-c-integrated-development"}
       ]
     },
     "kernel-side-code-developer": {
@@ -41,7 +41,7 @@
       "enabled": true,
       "description": "结构化头脑风暴，创意工作前必用",
       "depends": [
-        {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
+        {"source": "skills/brainstorming", "target": "skills/brainstorming"}
       ]
     },
     "code-review-cpp-enhanced": {
@@ -50,7 +50,7 @@
       "description": "深度C++代码检视（L1-L5五层金字塔），支持MR审查和本地审查",
       "depends": [
         "code-review-cpp-guidelines",
-        {"source": "skills/code-review-cpp-enhanced.md", "target": "skills/code-review-cpp-enhanced.md"}
+        {"source": "skills/code-review-cpp-enhanced", "target": "skills/code-review-cpp-enhanced"}
       ]
     },
     "code-review-cpp-guidelines": {
@@ -58,7 +58,7 @@
       "enabled": false,
       "description": "基于华为C++编程规范的代码审查指南",
       "depends": [
-        {"source": "skills/code-review-cpp-guidelines.md", "target": "skills/code-review-cpp-guidelines.md"}
+        {"source": "skills/code-review-cpp-guidelines", "target": "skills/code-review-cpp-guidelines"}
       ]
     },
     "cpp-interface-reviewer": {
@@ -142,7 +142,7 @@
       "enabled": false,
       "description": "生成架构图和流程图",
       "depends": [
-        {"source": "skills/diagram-generator.md", "target": "skills/diagram-generator.md"}
+        {"source": "skills/diagram-generator", "target": "skills/diagram-generator"}
       ]
     },
     "cpp-code-review": {
