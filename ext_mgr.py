@@ -487,12 +487,13 @@ class DialogAdapter:
 
 
 class DialogUI:
-    CATEGORY_LABELS = {
-        "skills": "Skills  — 技能扩展",
-        "agents": "Agents — 智能体",
-        "commands": "Commands — 命令编排",
+    TYPES_LABELS = {
+        "skill": "Skills  — 技能扩展",
+        "agent": "Agents — 智能体",
+        "command": "Commands — 命令编排",
+        "plugin": "Plugins — 插件扩展",
     }
-    CATEGORY_ORDER = ["skills", "agents", "commands"]
+    TYPES_ORDER = ["skill", "agent", "command", "plugin"]
 
     def __init__(self, adapter: DialogAdapter, config_manager: ConfigManager, source_dir: str):
         self._adapter = adapter
@@ -510,31 +511,29 @@ class DialogUI:
 
     def _check_availability(self, name: str, extensions: dict) -> list:
         missing = []
-        path = os.path.join(self._source_dir, name)
-        if not os.path.exists(path):
-            missing.append(name)
-        for dep in extensions.get(name, {}).get("depends", []):
-            dep_path = os.path.join(self._source_dir, dep)
-            if not os.path.exists(dep_path):
+        ext_deps, path_deps = parse_depends(
+            extensions.get(name, {}).get("depends", [])
+        )
+        for dep in ext_deps:
+            if dep not in extensions:
                 missing.append(dep)
+        for dep in path_deps:
+            source_path = os.path.join(self._source_dir, dep["source"])
+            if not os.path.exists(source_path):
+                missing.append(dep["source"])
         return missing
 
-    def _build_checklist_items(self, extensions: dict, category: str) -> tuple:
+    def _build_checklist_items(self, extensions: dict, ext_type: str) -> tuple:
         items = []
         unavailable = set()
         for name, ext in extensions.items():
-            if not name.startswith(category + "/"):
+            if ext.get("type") != ext_type:
                 continue
             missing = self._check_availability(name, extensions)
             if missing:
                 unavailable.add(name)
                 mark = "\\Zr !! \\ZR"
-                dep_missing = [d for d in missing if d != name]
-                help_text = "扩展文件不存在"
-                if any(d == name for d in missing) and dep_missing:
-                    help_text = "扩展文件不存在, 依赖: " + ", ".join(dep_missing)
-                elif dep_missing:
-                    help_text = "缺失依赖: " + ", ".join(dep_missing)
+                help_text = "缺失依赖: " + ", ".join(missing)
             else:
                 mark = "\\Zb\\Z2 OK \\Zn"
                 help_text = ext.get("description", "")
@@ -542,12 +541,12 @@ class DialogUI:
             items.append((name, ext.get("enabled", False), text, help_text))
         return items, unavailable
 
-    def _count_stats(self, extensions: dict, category: str) -> tuple:
+    def _count_stats(self, extensions: dict, ext_type: str) -> tuple:
         total = 0
         ok = 0
         enabled = 0
         for name, ext in extensions.items():
-            if not name.startswith(category + "/"):
+            if ext.get("type") != ext_type:
                 continue
             total += 1
             if ext.get("enabled", False):
@@ -570,23 +569,25 @@ class DialogUI:
         while True:
             menu_items = []
             max_label_w = 0
-            for cat in self.CATEGORY_ORDER:
-                total, _, _ = self._count_stats(extensions, cat)
+            for t in self.TYPES_ORDER:
+                total, _, _ = self._count_stats(extensions, t)
                 if total > 0:
                     max_label_w = max(
                         max_label_w,
-                        self._visible_len(self.CATEGORY_LABELS.get(cat, cat)),
+                        self._visible_len(self.TYPES_LABELS.get(t, t)),
                     )
-            for cat in self.CATEGORY_ORDER:
-                total, enabled, ok = self._count_stats(extensions, cat)
+            for t in self.TYPES_ORDER:
+                total, enabled, ok = self._count_stats(extensions, t)
                 if total == 0:
                     continue
-                label = self._pad_label(self.CATEGORY_LABELS.get(cat, cat), max_label_w)
+                label = self._pad_label(
+                    self.TYPES_LABELS.get(t, t), max_label_w
+                )
                 stats = (
                     f"\t\\Zb\\Z1{enabled}/{total} 启用\\Zn"
                     f"\t\\Zb\\Z5{ok}/{total} 可用\\Zn"
                 )
-                menu_items.append((cat, label + stats))
+                menu_items.append((t, label + stats))
             menu_items.append(("apply", "\\Zb\\Z2确认并应用变更\\Zn"))
             menu_items.append(("quit", "退出"))
 
@@ -600,22 +601,22 @@ class DialogUI:
                     if ext.get("enabled", False)
                 ]
 
-            if choice in self.CATEGORY_ORDER:
-                action = self._show_category_checklist(extensions, choice)
+            if choice in self.TYPES_ORDER:
+                action = self._show_type_checklist(extensions, choice)
                 if action == "apply":
                     return "ok", [
                         name for name, ext in extensions.items()
                         if ext.get("enabled", False)
                     ]
 
-    def _show_category_checklist(self, extensions: dict, category: str) -> str:
-        items, unavailable = self._build_checklist_items(extensions, category)
+    def _show_type_checklist(self, extensions: dict, ext_type: str) -> str:
+        items, unavailable = self._build_checklist_items(extensions, ext_type)
         if not items:
-            self._adapter.run_msgbox("提示", f"该分类下没有扩展")
+            self._adapter.run_msgbox("提示", "该分类下没有扩展")
             return "back"
 
         while True:
-            label = self.CATEGORY_LABELS.get(category, category)
+            label = self.TYPES_LABELS.get(ext_type, ext_type)
             title = f"{label}  (OK=齐全  !!=缺失,不可选)"
             code, selected, invalid = self._adapter.run_checklist(
                 title, items, unavailable
@@ -634,10 +635,12 @@ class DialogUI:
                 continue
 
             for name, ext in extensions.items():
-                if name.startswith(category + "/"):
+                if ext.get("type") == ext_type:
                     ext["enabled"] = name in selected
 
-            items, unavailable = self._build_checklist_items(extensions, category)
+            items, unavailable = self._build_checklist_items(
+                extensions, ext_type
+            )
             return "back"
 
     def show_change_summary(self, changes: dict) -> bool:

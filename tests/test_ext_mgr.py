@@ -709,3 +709,142 @@ def test_validate_multiple_paths_per_extension(tmp_path):
     statuses = [r["status"] for r in results]
     assert "ok" not in statuses
     assert any(s == "missing" for s in statuses)
+
+
+from unittest.mock import MagicMock
+from ext_mgr import DialogUI
+
+
+def _make_ui(source_dir="/fake"):
+    adapter = MagicMock()
+    config_mgr = MagicMock()
+    ui = DialogUI(adapter, config_mgr, source_dir)
+    return ui
+
+
+def test_check_availability_all_present(tmp_path):
+    (tmp_path / "skills").mkdir()
+    (tmp_path / "skills" / "brainstorming.md").write_text("skill")
+    ui = _make_ui(str(tmp_path))
+    exts = {
+        "brainstorming": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Brainstorm",
+            "depends": [
+                {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
+            ],
+        }
+    }
+    missing = ui._check_availability("brainstorming", exts)
+    assert missing == []
+
+
+def test_check_availability_ext_dep_missing(tmp_path):
+    (tmp_path / "skills").mkdir()
+    (tmp_path / "skills" / "brainstorming.md").write_text("skill")
+    ui = _make_ui(str(tmp_path))
+    exts = {
+        "brainstorming": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Brainstorm",
+            "depends": ["nonexistent-ext"],
+        }
+    }
+    missing = ui._check_availability("brainstorming", exts)
+    assert "nonexistent-ext" in missing
+
+
+def test_check_availability_path_dep_source_missing(tmp_path):
+    ui = _make_ui(str(tmp_path))
+    exts = {
+        "brainstorming": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Brainstorm",
+            "depends": [
+                {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
+            ],
+        }
+    }
+    missing = ui._check_availability("brainstorming", exts)
+    assert "skills/brainstorming.md" in missing
+
+
+def test_build_checklist_items_filters_by_type():
+    ui = _make_ui()
+    exts = {
+        "brainstorming": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Brainstorm",
+        },
+        "kernel-dev": {
+            "type": "agent",
+            "enabled": False,
+            "description": "Kernel Dev",
+        },
+    }
+    items, unavailable = ui._build_checklist_items(exts, "skill")
+    names = [i[0] for i in items]
+    assert "brainstorming" in names
+    assert "kernel-dev" not in names
+
+
+def test_build_checklist_items_filters_agent():
+    ui = _make_ui()
+    exts = {
+        "brainstorming": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Brainstorm",
+        },
+        "kernel-dev": {
+            "type": "agent",
+            "enabled": False,
+            "description": "Kernel Dev",
+        },
+    }
+    items, unavailable = ui._build_checklist_items(exts, "agent")
+    names = [i[0] for i in items]
+    assert "kernel-dev" in names
+    assert "brainstorming" not in names
+
+
+def test_count_stats_by_type():
+    ui = _make_ui()
+    exts = {
+        "brainstorming": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Brainstorm",
+        },
+        "code-review": {
+            "type": "skill",
+            "enabled": False,
+            "description": "Code Review",
+        },
+        "kernel-dev": {
+            "type": "agent",
+            "enabled": True,
+            "description": "Kernel Dev",
+        },
+    }
+    total, enabled, ok = ui._count_stats(exts, "skill")
+    assert total == 2
+    assert enabled == 1
+
+
+def test_count_stats_empty_type():
+    ui = _make_ui()
+    exts = {
+        "brainstorming": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Brainstorm",
+        },
+    }
+    total, enabled, ok = ui._count_stats(exts, "plugin")
+    assert total == 0
+    assert enabled == 0
