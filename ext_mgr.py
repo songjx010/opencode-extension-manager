@@ -206,50 +206,72 @@ class SymlinkManager:
         self._target_dir = os.path.abspath(target_dir)
 
     def apply_changes(
-        self, to_enable: list, to_disable: list
+        self, to_enable: list, to_disable: list, extensions: dict
     ) -> list:
         results = []
         for name in to_enable:
-            results.append(self.create_symlink(name))
+            results.extend(self.apply_for_extension(name, extensions, "create"))
         for name in to_disable:
-            results.append(self.remove_symlink(name))
+            results.extend(self.apply_for_extension(name, extensions, "remove"))
         return results
 
-    def create_symlink(self, ext_name: str) -> dict:
-        source, target = self._resolve_path(ext_name)
+    def apply_for_extension(
+        self, ext_name: str, extensions: dict, action: str
+    ) -> list:
+        _, path_deps = parse_depends(extensions[ext_name].get("depends", []))
+        results = []
+        for dep in path_deps:
+            if action == "create":
+                results.append(
+                    self._create_symlink(dep["source"], dep["target"])
+                )
+            else:
+                results.append(
+                    self._remove_symlink(dep["source"], dep["target"])
+                )
+        if not path_deps:
+            results.append(
+                {"name": ext_name, "status": "skipped", "detail": "无路径依赖"}
+            )
+        return results
+
+    def _create_symlink(self, source_rel: str, target_rel: str) -> dict:
+        source = os.path.join(self._source_dir, source_rel)
+        target = os.path.join(self._target_dir, target_rel)
         self._ensure_subdir(os.path.dirname(target))
 
         if os.path.islink(target):
             existing = os.readlink(target)
             if os.path.abspath(existing) == os.path.abspath(source):
-                return {"name": ext_name, "status": "skipped", "detail": ""}
+                return {"name": target_rel, "status": "skipped", "detail": ""}
             return {
-                "name": ext_name,
+                "name": target_rel,
                 "status": "conflict",
                 "detail": f"符号链接已指向 {existing}",
             }
 
         if os.path.exists(target):
             return {
-                "name": ext_name,
+                "name": target_rel,
                 "status": "conflict",
                 "detail": f"目标路径 {target} 已存在",
             }
 
         try:
             os.symlink(source, target)
-            return {"name": ext_name, "status": "success", "detail": ""}
+            return {"name": target_rel, "status": "success", "detail": ""}
         except OSError as e:
-            return {"name": ext_name, "status": "error", "detail": str(e)}
+            return {"name": target_rel, "status": "error", "detail": str(e)}
 
-    def remove_symlink(self, ext_name: str) -> dict:
-        source, target = self._resolve_path(ext_name)
+    def _remove_symlink(self, source_rel: str, target_rel: str) -> dict:
+        source = os.path.join(self._source_dir, source_rel)
+        target = os.path.join(self._target_dir, target_rel)
 
         if not os.path.islink(target):
             if not os.path.exists(target):
-                return {"name": ext_name, "status": "skipped", "detail": ""}
+                return {"name": target_rel, "status": "skipped", "detail": ""}
             return {
-                "name": ext_name,
+                "name": target_rel,
                 "status": "conflict",
                 "detail": f"目标路径 {target} 存在但非符号链接",
             }
@@ -257,21 +279,16 @@ class SymlinkManager:
         existing = os.readlink(target)
         if os.path.abspath(existing) != os.path.abspath(source):
             return {
-                "name": ext_name,
+                "name": target_rel,
                 "status": "conflict",
                 "detail": f"符号链接指向 {existing}，非预期目标",
             }
 
         try:
             os.unlink(target)
-            return {"name": ext_name, "status": "success", "detail": ""}
+            return {"name": target_rel, "status": "success", "detail": ""}
         except OSError as e:
-            return {"name": ext_name, "status": "error", "detail": str(e)}
-
-    def _resolve_path(self, ext_name: str) -> tuple:
-        source = os.path.join(self._source_dir, ext_name)
-        target = os.path.join(self._target_dir, ext_name)
-        return source, target
+            return {"name": target_rel, "status": "error", "detail": str(e)}
 
     def _ensure_subdir(self, dir_path: str) -> None:
         os.makedirs(dir_path, exist_ok=True)

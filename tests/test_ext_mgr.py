@@ -396,3 +396,185 @@ def test_resolve_all_enabled_no_disable():
     assert result["to_enable"] == ["a", "b", "c", "standalone"]
     assert result["to_disable"] == []
     assert result["rejected"] == []
+
+
+from ext_mgr import SymlinkManager
+
+
+def _setup_dirs(tmp_path):
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    target.mkdir()
+    return str(source), str(target)
+
+
+def test_create_symlink_success(tmp_path):
+    source, target = _setup_dirs(tmp_path)
+    (tmp_path / "source" / "skills").mkdir()
+    (tmp_path / "source" / "skills" / "brainstorming.md").write_text("skill")
+    mgr = SymlinkManager(source, target)
+    exts = {
+        "brainstorming": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Brainstorm",
+            "depends": [
+                {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
+            ],
+        }
+    }
+    results = mgr.apply_for_extension("brainstorming", exts, "create")
+    assert len(results) == 1
+    assert results[0]["status"] == "success"
+    link = os.path.join(target, "skills", "brainstorming.md")
+    assert os.path.islink(link)
+
+
+def test_create_symlink_already_exists_correct(tmp_path):
+    source, target = _setup_dirs(tmp_path)
+    (tmp_path / "source" / "skills").mkdir()
+    src_file = tmp_path / "source" / "skills" / "brainstorming.md"
+    src_file.write_text("skill")
+    (tmp_path / "target" / "skills").mkdir()
+    os.symlink(str(src_file), os.path.join(target, "skills", "brainstorming.md"))
+    mgr = SymlinkManager(source, target)
+    exts = {
+        "brainstorming": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Brainstorm",
+            "depends": [
+                {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
+            ],
+        }
+    }
+    results = mgr.apply_for_extension("brainstorming", exts, "create")
+    assert results[0]["status"] == "skipped"
+
+
+def test_create_symlink_conflict(tmp_path):
+    source, target = _setup_dirs(tmp_path)
+    (tmp_path / "target" / "skills").mkdir()
+    conflict = tmp_path / "target" / "skills" / "brainstorming.md"
+    conflict.write_text("other")
+    mgr = SymlinkManager(source, target)
+    exts = {
+        "brainstorming": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Brainstorm",
+            "depends": [
+                {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
+            ],
+        }
+    }
+    results = mgr.apply_for_extension("brainstorming", exts, "create")
+    assert results[0]["status"] == "conflict"
+
+
+def test_remove_symlink_success(tmp_path):
+    source, target = _setup_dirs(tmp_path)
+    (tmp_path / "source" / "skills").mkdir()
+    src_file = tmp_path / "source" / "skills" / "brainstorming.md"
+    src_file.write_text("skill")
+    (tmp_path / "target" / "skills").mkdir()
+    os.symlink(str(src_file), os.path.join(target, "skills", "brainstorming.md"))
+    mgr = SymlinkManager(source, target)
+    exts = {
+        "brainstorming": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Brainstorm",
+            "depends": [
+                {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
+            ],
+        }
+    }
+    results = mgr.apply_for_extension("brainstorming", exts, "remove")
+    assert results[0]["status"] == "success"
+    assert not os.path.exists(os.path.join(target, "skills", "brainstorming.md"))
+
+
+def test_remove_symlink_not_exist(tmp_path):
+    source, target = _setup_dirs(tmp_path)
+    mgr = SymlinkManager(source, target)
+    exts = {
+        "brainstorming": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Brainstorm",
+            "depends": [
+                {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
+            ],
+        }
+    }
+    results = mgr.apply_for_extension("brainstorming", exts, "remove")
+    assert results[0]["status"] == "skipped"
+
+
+def test_apply_for_extension_multiple_paths(tmp_path):
+    source, target = _setup_dirs(tmp_path)
+    (tmp_path / "source" / "skills").mkdir()
+    (tmp_path / "source" / "skills" / "main.md").write_text("main")
+    (tmp_path / "source" / "skills" / "helper.md").write_text("helper")
+    mgr = SymlinkManager(source, target)
+    exts = {
+        "multi": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Multi",
+            "depends": [
+                {"source": "skills/main.md", "target": "skills/main.md"},
+                {"source": "skills/helper.md", "target": "skills/helper.md"},
+            ],
+        }
+    }
+    results = mgr.apply_for_extension("multi", exts, "create")
+    assert len(results) == 2
+    assert all(r["status"] == "success" for r in results)
+
+
+def test_apply_for_extension_no_path_deps(tmp_path):
+    source, target = _setup_dirs(tmp_path)
+    mgr = SymlinkManager(source, target)
+    exts = {
+        "pure-dep": {
+            "type": "skill",
+            "enabled": True,
+            "description": "PureDep",
+            "depends": ["other-ext"],
+        }
+    }
+    results = mgr.apply_for_extension("pure-dep", exts, "create")
+    assert len(results) == 1
+    assert results[0]["status"] == "skipped"
+
+
+def test_apply_changes_with_extensions(tmp_path):
+    source, target = _setup_dirs(tmp_path)
+    (tmp_path / "source" / "skills").mkdir()
+    (tmp_path / "source" / "skills" / "a.md").write_text("a")
+    src_b = tmp_path / "source" / "skills" / "b.md"
+    src_b.write_text("b")
+    (tmp_path / "target" / "skills").mkdir(parents=True, exist_ok=True)
+    os.symlink(str(src_b), os.path.join(target, "skills", "b.md"))
+    mgr = SymlinkManager(source, target)
+    exts = {
+        "ext-a": {
+            "type": "skill",
+            "enabled": True,
+            "description": "A",
+            "depends": [{"source": "skills/a.md", "target": "skills/a.md"}],
+        },
+        "ext-b": {
+            "type": "skill",
+            "enabled": True,
+            "description": "B",
+            "depends": [{"source": "skills/b.md", "target": "skills/b.md"}],
+        },
+    }
+    results = mgr.apply_changes(["ext-a"], ["ext-b"], exts)
+    success_names = [r["name"] for r in results if r["status"] == "success"]
+    assert "skills/a.md" in success_names
+    assert "skills/b.md" in success_names
