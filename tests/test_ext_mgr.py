@@ -578,3 +578,134 @@ def test_apply_changes_with_extensions(tmp_path):
     success_names = [r["name"] for r in results if r["status"] == "success"]
     assert "skills/a.md" in success_names
     assert "skills/b.md" in success_names
+
+
+from ext_mgr import Validator
+
+
+def test_validate_enabled_ok(tmp_path):
+    source, target = _setup_dirs(tmp_path)
+    (tmp_path / "source" / "skills").mkdir()
+    src_file = tmp_path / "source" / "skills" / "brainstorming.md"
+    src_file.write_text("skill")
+    (tmp_path / "target" / "skills").mkdir()
+    os.symlink(str(src_file), os.path.join(target, "skills", "brainstorming.md"))
+    validator = Validator(source, target)
+    exts = {
+        "brainstorming": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Brainstorm",
+            "depends": [
+                {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
+            ],
+        }
+    }
+    results = validator.validate(exts)
+    assert len(results) == 1
+    assert results[0]["status"] == "ok"
+
+
+def test_validate_enabled_missing(tmp_path):
+    source, target = _setup_dirs(tmp_path)
+    validator = Validator(source, target)
+    exts = {
+        "brainstorming": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Brainstorm",
+            "depends": [
+                {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
+            ],
+        }
+    }
+    results = validator.validate(exts)
+    assert any(r["status"] == "missing" for r in results)
+
+
+def test_validate_disabled_unexpected(tmp_path):
+    source, target = _setup_dirs(tmp_path)
+    (tmp_path / "source" / "skills").mkdir()
+    src_file = tmp_path / "source" / "skills" / "brainstorming.md"
+    src_file.write_text("skill")
+    (tmp_path / "target" / "skills").mkdir()
+    os.symlink(str(src_file), os.path.join(target, "skills", "brainstorming.md"))
+    validator = Validator(source, target)
+    exts = {
+        "brainstorming": {
+            "type": "skill",
+            "enabled": False,
+            "description": "Brainstorm",
+            "depends": [
+                {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
+            ],
+        }
+    }
+    results = validator.validate(exts)
+    assert any(r["status"] == "unexpected" for r in results)
+
+
+def test_validate_enabled_broken_link(tmp_path):
+    source, target = _setup_dirs(tmp_path)
+    (tmp_path / "source" / "skills").mkdir()
+    src_file = tmp_path / "source" / "skills" / "brainstorming.md"
+    src_file.write_text("skill")
+    (tmp_path / "target" / "skills").mkdir()
+    os.symlink("/nonexistent/path", os.path.join(target, "skills", "brainstorming.md"))
+    validator = Validator(source, target)
+    exts = {
+        "brainstorming": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Brainstorm",
+            "depends": [
+                {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
+            ],
+        }
+    }
+    results = validator.validate(exts)
+    assert any(r["status"] == "broken" for r in results)
+
+
+def test_validate_no_target_dir(tmp_path):
+    source = str(tmp_path / "source")
+    target = str(tmp_path / "nonexistent_target")
+    os.makedirs(source)
+    validator = Validator(source, target)
+    exts = {
+        "brainstorming": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Brainstorm",
+            "depends": [
+                {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
+            ],
+        }
+    }
+    results = validator.validate(exts)
+    assert any(r["status"] == "missing" for r in results)
+
+
+def test_validate_multiple_paths_per_extension(tmp_path):
+    source, target = _setup_dirs(tmp_path)
+    (tmp_path / "source" / "skills").mkdir()
+    (tmp_path / "source" / "skills" / "main.md").write_text("main")
+    (tmp_path / "target" / "skills").mkdir()
+    src_main = tmp_path / "source" / "skills" / "main.md"
+    os.symlink(str(src_main), os.path.join(target, "skills", "main.md"))
+    validator = Validator(source, target)
+    exts = {
+        "multi": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Multi",
+            "depends": [
+                {"source": "skills/main.md", "target": "skills/main.md"},
+                {"source": "skills/helper.md", "target": "skills/helper.md"},
+            ],
+        }
+    }
+    results = validator.validate(exts)
+    statuses = [r["status"] for r in results]
+    assert "ok" not in statuses
+    assert any(s == "missing" for s in statuses)

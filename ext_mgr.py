@@ -304,47 +304,59 @@ class Validator:
         if not os.path.isdir(self._target_dir):
             for name, ext in extensions.items():
                 if ext.get("enabled", False):
-                    results.append(
-                        {
-                            "name": name,
-                            "status": "missing",
-                            "detail": "目标目录不存在",
-                        }
-                    )
+                    _, path_deps = parse_depends(ext.get("depends", []))
+                    if path_deps:
+                        results.append(
+                            {
+                                "name": name,
+                                "status": "missing",
+                                "detail": "目标目录不存在",
+                            }
+                        )
             return results
 
         for name, ext in extensions.items():
             enabled = ext.get("enabled", False)
-            target = os.path.join(self._target_dir, name)
+            _, path_deps = parse_depends(ext.get("depends", []))
 
             if enabled:
-                if not os.path.islink(target):
-                    results.append(
-                        {"name": name, "status": "missing", "detail": "符号链接缺失"}
-                    )
-                else:
-                    expected = os.path.join(self._source_dir, name)
-                    actual = os.readlink(target)
-                    if os.path.abspath(actual) != os.path.abspath(expected):
+                for dep in path_deps:
+                    target = os.path.join(self._target_dir, dep["target"])
+                    source = os.path.join(self._source_dir, dep["source"])
+                    if not os.path.islink(target):
                         results.append(
                             {
-                                "name": name,
-                                "status": "broken",
-                                "detail": f"指向错误目标: {actual}",
+                                "name": f"{name}:{dep['target']}",
+                                "status": "missing",
+                                "detail": "符号链接缺失",
                             }
                         )
+                    else:
+                        actual = os.readlink(target)
+                        if os.path.abspath(actual) != os.path.abspath(source):
+                            results.append(
+                                {
+                                    "name": f"{name}:{dep['target']}",
+                                    "status": "broken",
+                                    "detail": f"指向错误目标: {actual}",
+                                }
+                            )
             else:
-                if os.path.islink(target):
-                    results.append(
-                        {
-                            "name": name,
-                            "status": "unexpected",
-                            "detail": "已禁用但符号链接仍存在",
-                        }
-                    )
+                for dep in path_deps:
+                    target = os.path.join(self._target_dir, dep["target"])
+                    if os.path.islink(target):
+                        results.append(
+                            {
+                                "name": f"{name}:{dep['target']}",
+                                "status": "unexpected",
+                                "detail": "已禁用但符号链接仍存在",
+                            }
+                        )
 
         if not results:
-            results.append({"name": "", "status": "ok", "detail": "所有扩展状态正常"})
+            results.append(
+                {"name": "", "status": "ok", "detail": "所有扩展状态正常"}
+            )
 
         return results
 
