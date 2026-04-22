@@ -137,9 +137,8 @@ class ConfigManager:
         def dfs(name: str, path: list) -> None:
             color[name] = GRAY
             path.append(name)
-            for dep in exts[name].get("depends", []):
-                if not isinstance(dep, str):
-                    continue
+            ext_deps, _ = parse_depends(exts[name].get("depends", []))
+            for dep in ext_deps:
                 if dep not in color:
                     continue
                 if color[dep] == GRAY:

@@ -208,3 +208,93 @@ def test_validate_empty_depends_ok(tmp_path):
     p = _write_config(tmp_path, cfg)
     config = ConfigManager(p).load()
     assert config["warnings"] == []
+
+
+def test_no_cycle(tmp_path):
+    cfg = _valid_config()
+    p = _write_config(tmp_path, cfg)
+    config = ConfigManager(p).load()
+    assert config["warnings"] == []
+
+
+def test_simple_cycle(tmp_path):
+    cfg = {
+        "version": 2,
+        "extensions": {
+            "a": {
+                "type": "skill",
+                "enabled": True,
+                "description": "A",
+                "depends": ["b"],
+            },
+            "b": {
+                "type": "agent",
+                "enabled": True,
+                "description": "B",
+                "depends": ["a"],
+            },
+        },
+    }
+    p = _write_config(tmp_path, cfg)
+    with pytest.raises(ConfigError, match="循环依赖"):
+        ConfigManager(p).load()
+
+
+def test_three_node_cycle(tmp_path):
+    cfg = {
+        "version": 2,
+        "extensions": {
+            "a": {
+                "type": "skill",
+                "enabled": True,
+                "description": "A",
+                "depends": ["b"],
+            },
+            "b": {
+                "type": "agent",
+                "enabled": True,
+                "description": "B",
+                "depends": ["c"],
+            },
+            "c": {
+                "type": "command",
+                "enabled": True,
+                "description": "C",
+                "depends": [
+                    "a",
+                    {"source": "c.md", "target": "c.md"},
+                ],
+            },
+        },
+    }
+    p = _write_config(tmp_path, cfg)
+    with pytest.raises(ConfigError, match="循环依赖"):
+        ConfigManager(p).load()
+
+
+def test_cycle_with_path_deps_no_false_positive(tmp_path):
+    cfg = {
+        "version": 2,
+        "extensions": {
+            "a": {
+                "type": "skill",
+                "enabled": True,
+                "description": "A",
+                "depends": [
+                    {"source": "a.md", "target": "a.md"},
+                ],
+            },
+            "b": {
+                "type": "agent",
+                "enabled": True,
+                "description": "B",
+                "depends": [
+                    "a",
+                    {"source": "b.md", "target": "b.md"},
+                ],
+            },
+        },
+    }
+    p = _write_config(tmp_path, cfg)
+    config = ConfigManager(p).load()
+    assert config["warnings"] == []
