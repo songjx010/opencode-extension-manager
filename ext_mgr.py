@@ -10,8 +10,6 @@ import sys
 import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 
-VALID_CATEGORIES = {"skills", "agents", "commands"}
-
 VALID_TYPES = {"skill", "agent", "command", "plugin"}
 
 
@@ -73,7 +71,7 @@ class ConfigManager:
 
         if "version" not in config:
             raise ConfigError("缺少 version 字段")
-        if config["version"] != 1:
+        if config["version"] != 2:
             raise ConfigError(f"不支持的 version: {config['version']}")
 
         if "extensions" not in config:
@@ -92,23 +90,38 @@ class ConfigManager:
             if "description" not in ext:
                 errors.append(f"扩展 '{name}' 缺少 description 字段")
 
-            parts = name.split("/")
-            if len(parts) != 2:
-                errors.append(f"扩展键名 '{name}' 格式错误，应为 <category>/<name>")
-            elif parts[0] not in VALID_CATEGORIES:
+            if "type" not in ext:
+                errors.append(f"扩展 '{name}' 缺少 type 字段")
+            elif ext["type"] not in VALID_TYPES:
                 errors.append(
-                    f"扩展 '{name}' 的 category '{parts[0]}' 不合法，"
-                    f"必须为 {', '.join(sorted(VALID_CATEGORIES))}"
+                    f"扩展 '{name}' 的 type '{ext['type']}' 不合法，"
+                    f"必须为 {', '.join(sorted(VALID_TYPES))}"
                 )
 
+            if "/" in name:
+                errors.append(f"扩展键名 '{name}' 格式错误，应为纯名称（不含 /）")
             if ".." in name:
-                raise ConfigError(f"扩展名称 '{name}' 包含非法字符 '..'")
+                errors.append(f"扩展名称 '{name}' 包含非法字符 '..'")
             if name.startswith("/"):
-                raise ConfigError(f"扩展名称 '{name}' 包含非法字符（绝对路径）")
+                errors.append(f"扩展名称 '{name}' 包含非法字符（绝对路径）")
 
             for dep in ext.get("depends", []):
-                if dep not in exts:
-                    warnings.append(f"扩展 '{name}' 的依赖 '{dep}' 不存在")
+                if isinstance(dep, str):
+                    if not dep:
+                        errors.append(f"扩展 '{name}' 的扩展依赖名称不能为空")
+                    elif "/" in dep or ".." in dep or dep.startswith("/"):
+                        errors.append(f"扩展 '{name}' 的扩展依赖 '{dep}' 格式错误")
+                    elif dep not in exts:
+                        warnings.append(f"扩展 '{name}' 的依赖 '{dep}' 不存在")
+                elif isinstance(dep, dict):
+                    if "source" not in dep or "target" not in dep:
+                        errors.append(
+                            f"扩展 '{name}' 的路径依赖缺少 source 或 target 字段"
+                        )
+                else:
+                    errors.append(
+                        f"扩展 '{name}' 的依赖类型不合法: {type(dep).__name__}"
+                    )
 
         if errors:
             raise ConfigError("; ".join(errors))
@@ -125,6 +138,8 @@ class ConfigManager:
             color[name] = GRAY
             path.append(name)
             for dep in exts[name].get("depends", []):
+                if not isinstance(dep, str):
+                    continue
                 if dep not in color:
                     continue
                 if color[dep] == GRAY:

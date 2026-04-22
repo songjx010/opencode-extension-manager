@@ -1,4 +1,7 @@
-from ext_mgr import parse_depends
+import json
+import os
+import pytest
+from ext_mgr import parse_depends, ConfigManager, ConfigError
 
 
 def test_parse_depends_empty():
@@ -43,3 +46,165 @@ def test_parse_depends_ignores_unknown_types():
     ext_deps, path_deps = parse_depends([123, True])
     assert ext_deps == []
     assert path_deps == []
+
+
+def _write_config(tmp_path, config_dict):
+    p = tmp_path / "extensions.json"
+    p.write_text(json.dumps(config_dict, ensure_ascii=False), encoding="utf-8")
+    return str(p)
+
+
+def _valid_config():
+    return {
+        "version": 2,
+        "extensions": {
+            "brainstorming": {
+                "type": "skill",
+                "enabled": True,
+                "description": "头脑风暴",
+                "depends": [
+                    {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
+                ],
+            },
+            "kernel-dev": {
+                "type": "agent",
+                "enabled": False,
+                "description": "Kernel开发",
+                "depends": [
+                    "brainstorming",
+                    {"source": "agents/kernel.md", "target": "agents/kernel.md"},
+                ],
+            },
+        },
+    }
+
+
+def test_validate_version2_ok(tmp_path):
+    p = _write_config(tmp_path, _valid_config())
+    mgr = ConfigManager(p)
+    config = mgr.load()
+    assert config["version"] == 2
+    assert config["warnings"] == []
+
+
+def test_validate_version1_rejected(tmp_path):
+    cfg = _valid_config()
+    cfg["version"] = 1
+    p = _write_config(tmp_path, cfg)
+    with pytest.raises(ConfigError, match="不支持的 version: 1"):
+        ConfigManager(p).load()
+
+
+def test_validate_missing_version(tmp_path):
+    cfg = _valid_config()
+    del cfg["version"]
+    p = _write_config(tmp_path, cfg)
+    with pytest.raises(ConfigError, match="缺少 version 字段"):
+        ConfigManager(p).load()
+
+
+def test_validate_type_skill_ok(tmp_path):
+    cfg = _valid_config()
+    cfg["extensions"]["brainstorming"]["type"] = "skill"
+    p = _write_config(tmp_path, cfg)
+    config = ConfigManager(p).load()
+    assert config["extensions"]["brainstorming"]["type"] == "skill"
+
+
+def test_validate_type_plugin_ok(tmp_path):
+    cfg = _valid_config()
+    cfg["extensions"]["brainstorming"]["type"] = "plugin"
+    p = _write_config(tmp_path, cfg)
+    config = ConfigManager(p).load()
+    assert config["extensions"]["brainstorming"]["type"] == "plugin"
+
+
+def test_validate_type_unknown_rejected(tmp_path):
+    cfg = _valid_config()
+    cfg["extensions"]["brainstorming"]["type"] = "unknown"
+    p = _write_config(tmp_path, cfg)
+    with pytest.raises(ConfigError, match="type 'unknown' 不合法"):
+        ConfigManager(p).load()
+
+
+def test_validate_missing_type(tmp_path):
+    cfg = _valid_config()
+    del cfg["extensions"]["brainstorming"]["type"]
+    p = _write_config(tmp_path, cfg)
+    with pytest.raises(ConfigError, match="缺少 type 字段"):
+        ConfigManager(p).load()
+
+
+def test_validate_key_with_slash_rejected(tmp_path):
+    cfg = _valid_config()
+    ext = cfg["extensions"].pop("brainstorming")
+    cfg["extensions"]["skills/brainstorming"] = ext
+    p = _write_config(tmp_path, cfg)
+    with pytest.raises(ConfigError, match="格式错误"):
+        ConfigManager(p).load()
+
+
+def test_validate_key_with_dotdot_rejected(tmp_path):
+    cfg = _valid_config()
+    ext = cfg["extensions"].pop("brainstorming")
+    cfg["extensions"]["../evil"] = ext
+    p = _write_config(tmp_path, cfg)
+    with pytest.raises(ConfigError, match="非法字符"):
+        ConfigManager(p).load()
+
+
+def test_validate_depends_path_dep_missing_source(tmp_path):
+    cfg = _valid_config()
+    cfg["extensions"]["brainstorming"]["depends"] = [
+        {"target": "skills/brainstorming.md"}
+    ]
+    p = _write_config(tmp_path, cfg)
+    with pytest.raises(ConfigError, match="缺少 source 或 target 字段"):
+        ConfigManager(p).load()
+
+
+def test_validate_depends_invalid_type(tmp_path):
+    cfg = _valid_config()
+    cfg["extensions"]["brainstorming"]["depends"] = [123]
+    p = _write_config(tmp_path, cfg)
+    with pytest.raises(ConfigError, match="依赖类型不合法"):
+        ConfigManager(p).load()
+
+
+def test_validate_ext_dep_not_exist_warning(tmp_path):
+    cfg = _valid_config()
+    cfg["extensions"]["brainstorming"]["depends"] = ["nonexistent"]
+    p = _write_config(tmp_path, cfg)
+    config = ConfigManager(p).load()
+    assert any("nonexistent" in w for w in config["warnings"])
+
+
+def test_validate_ext_dep_with_slash_rejected(tmp_path):
+    cfg = _valid_config()
+    cfg["extensions"]["brainstorming"]["depends"] = ["skills/other"]
+    p = _write_config(tmp_path, cfg)
+    with pytest.raises(ConfigError, match="格式错误"):
+        ConfigManager(p).load()
+
+
+def test_validate_ext_dep_empty_rejected(tmp_path):
+    cfg = _valid_config()
+    cfg["extensions"]["brainstorming"]["depends"] = [""]
+    p = _write_config(tmp_path, cfg)
+    with pytest.raises(ConfigError, match="扩展依赖名称不能为空"):
+        ConfigManager(p).load()
+
+
+def test_validate_empty_extensions_ok(tmp_path):
+    cfg = {"version": 2, "extensions": {}}
+    p = _write_config(tmp_path, cfg)
+    config = ConfigManager(p).load()
+    assert config["extensions"] == {}
+
+
+def test_validate_empty_depends_ok(tmp_path):
+    cfg = _valid_config()
+    cfg["extensions"]["brainstorming"]["depends"] = []
+    p = _write_config(tmp_path, cfg)
+    config = ConfigManager(p).load()
+    assert config["warnings"] == []
