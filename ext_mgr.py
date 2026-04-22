@@ -748,7 +748,7 @@ def main():
             continue
 
         results = symlink_mgr.apply_changes(
-            changes["to_enable"], changes["to_disable"]
+            changes["to_enable"], changes["to_disable"], extensions
         )
         ui.show_results(results)
 
