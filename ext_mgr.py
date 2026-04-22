@@ -12,6 +12,19 @@ from typing import Any, Dict, List, Optional, Tuple
 
 VALID_CATEGORIES = {"skills", "agents", "commands"}
 
+VALID_TYPES = {"skill", "agent", "command", "plugin"}
+
+
+def parse_depends(depends_list):
+    ext_deps = []
+    path_deps = []
+    for item in depends_list:
+        if isinstance(item, str):
+            ext_deps.append(item)
+        elif isinstance(item, dict):
+            path_deps.append(item)
+    return ext_deps, path_deps
+
 
 class ConfigError(Exception):
     pass
