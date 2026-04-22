@@ -1,63 +1,173 @@
 {
-  "version": 1,
+  "version": 2,
   "extensions": {
-    "skills/ascend-c-integrated-development": {
+    "ascend-c-integrated-development": {
+      "type": "skill",
       "enabled": true,
       "description": "Ascend C自定义算子全流程开发（kernel/host/ONNX插件）",
       "depends": [
-        "agents/kernel-side-code-developer.md",
-        "agents/host-side-code-developer.md",
-        "agents/onnx-plugin-developer.md"
+        "kernel-side-code-developer",
+        "host-side-code-developer",
+        "onnx-plugin-developer",
+        {"source": "skills/ascend-c-integrated-development.md", "target": "skills/ascend-c-integrated-development.md"}
       ]
     },
-    "skills/brainstorming": {
+    "kernel-side-code-developer": {
+      "type": "agent",
       "enabled": true,
-      "description": "结构化头脑风暴，创意工作前必用"
+      "description": "Kernel侧代码开发",
+      "depends": [
+        {"source": "agents/kernel-side-code-developer.md", "target": "agents/kernel-side-code-developer.md"}
+      ]
     },
-    "skills/code-review-cpp-enhanced": {
+    "host-side-code-developer": {
+      "type": "agent",
+      "enabled": true,
+      "description": "Host侧代码开发",
+      "depends": [
+        {"source": "agents/host-side-code-developer.md", "target": "agents/host-side-code-developer.md"}
+      ]
+    },
+    "onnx-plugin-developer": {
+      "type": "agent",
+      "enabled": true,
+      "description": "ONNX插件开发",
+      "depends": [
+        {"source": "agents/onnx-plugin-developer.md", "target": "agents/onnx-plugin-developer.md"}
+      ]
+    },
+    "brainstorming": {
+      "type": "skill",
+      "enabled": true,
+      "description": "结构化头脑风暴，创意工作前必用",
+      "depends": [
+        {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
+      ]
+    },
+    "code-review-cpp-enhanced": {
+      "type": "skill",
       "enabled": false,
       "description": "深度C++代码检视（L1-L5五层金字塔），支持MR审查和本地审查",
       "depends": [
-        "skills/code-review-cpp-guidelines"
+        "code-review-cpp-guidelines",
+        {"source": "skills/code-review-cpp-enhanced.md", "target": "skills/code-review-cpp-enhanced.md"}
       ]
     },
-    "skills/code-review-cpp-guidelines": {
+    "code-review-cpp-guidelines": {
+      "type": "skill",
       "enabled": false,
-      "description": "基于华为C++编程规范的代码审查指南"
+      "description": "基于华为C++编程规范的代码审查指南",
+      "depends": [
+        {"source": "skills/code-review-cpp-guidelines.md", "target": "skills/code-review-cpp-guidelines.md"}
+      ]
     },
-    "agents/cpp-interface-reviewer.md": {
+    "cpp-interface-reviewer": {
+      "type": "agent",
       "enabled": false,
-      "description": "C++接口设计检视（参数安全/异常处理/移动语义）"
+      "description": "C++接口设计检视（参数安全/异常处理/移动语义）",
+      "depends": [
+        {"source": "agents/cpp-interface-reviewer.md", "target": "agents/cpp-interface-reviewer.md"}
+      ]
     },
-    "commands/complex-task.md": {
+    "cpp-memory-reviewer": {
+      "type": "agent",
+      "enabled": false,
+      "description": "C++内存安全审查（泄漏/悬垂/越界）",
+      "depends": [
+        {"source": "agents/cpp-memory-reviewer.md", "target": "agents/cpp-memory-reviewer.md"}
+      ]
+    },
+    "cpp-concurrency-reviewer": {
+      "type": "agent",
+      "enabled": false,
+      "description": "C++并发安全审查（竞态/死锁/数据竞争）",
+      "depends": [
+        {"source": "agents/cpp-concurrency-reviewer.md", "target": "agents/cpp-concurrency-reviewer.md"}
+      ]
+    },
+    "cpp-logic-reviewer": {
+      "type": "agent",
+      "enabled": false,
+      "description": "C++逻辑缺陷检测（控制流/边界/空指针）",
+      "depends": [
+        {"source": "agents/cpp-logic-reviewer.md", "target": "agents/cpp-logic-reviewer.md"}
+      ]
+    },
+    "cpp-bug-scorer": {
+      "type": "agent",
+      "enabled": false,
+      "description": "C++缺陷严重度评分",
+      "depends": [
+        {"source": "agents/cpp-bug-scorer.md", "target": "agents/cpp-bug-scorer.md"}
+      ]
+    },
+    "cpp-idiom-reviewer": {
+      "type": "agent",
+      "enabled": false,
+      "description": "C++惯用法审查（RAII/Pimpl/CRTP）",
+      "depends": [
+        {"source": "agents/cpp-idiom-reviewer.md", "target": "agents/cpp-idiom-reviewer.md"}
+      ]
+    },
+    "cpp-stl-reviewer": {
+      "type": "agent",
+      "enabled": false,
+      "description": "C++ STL使用审查（容器选择/算法/迭代器）",
+      "depends": [
+        {"source": "agents/cpp-stl-reviewer.md", "target": "agents/cpp-stl-reviewer.md"}
+      ]
+    },
+    "cpp-standards-scorer": {
+      "type": "agent",
+      "enabled": false,
+      "description": "C++编码规范评分（按华为标准）",
+      "depends": [
+        {"source": "agents/cpp-standards-scorer.md", "target": "agents/cpp-standards-scorer.md"}
+      ]
+    },
+    "complex-task": {
+      "type": "command",
       "enabled": false,
       "description": "编排复杂多步骤任务",
       "depends": [
-        "skills/brainstorming",
-        "skills/diagram-generator",
-        "commands/cpp-code-review.md",
-        "commands/cpp-guideline-review.md"
+        "brainstorming",
+        "diagram-generator",
+        "cpp-code-review",
+        "cpp-guideline-review",
+        {"source": "commands/complex-task.md", "target": "commands/complex-task.md"}
       ]
     },
-    "commands/cpp-code-review.md": {
+    "diagram-generator": {
+      "type": "skill",
+      "enabled": false,
+      "description": "生成架构图和流程图",
+      "depends": [
+        {"source": "skills/diagram-generator.md", "target": "skills/diagram-generator.md"}
+      ]
+    },
+    "cpp-code-review": {
+      "type": "command",
       "enabled": false,
       "description": "C++逻辑缺陷检测（内存/并发/控制流）",
       "depends": [
-        "agents/cpp-memory-reviewer.md",
-        "agents/cpp-concurrency-reviewer.md",
-        "agents/cpp-logic-reviewer.md",
-        "agents/cpp-bug-scorer.md"
+        "cpp-memory-reviewer",
+        "cpp-concurrency-reviewer",
+        "cpp-logic-reviewer",
+        "cpp-bug-scorer",
+        {"source": "commands/cpp-code-review.md", "target": "commands/cpp-code-review.md"}
       ]
     },
-    "commands/cpp-guideline-review.md": {
+    "cpp-guideline-review": {
+      "type": "command",
       "enabled": false,
       "description": "C++编码规范审查（惯用法/接口/STL/规范评分）",
       "depends": [
-        "agents/cpp-idiom-reviewer.md",
-        "agents/cpp-interface-reviewer.md",
-        "agents/cpp-stl-reviewer.md",
-        "agents/cpp-standards-scorer.md",
-        "references/cpp-coding-standards"
+        "cpp-idiom-reviewer",
+        "cpp-interface-reviewer",
+        "cpp-stl-reviewer",
+        "cpp-standards-scorer",
+        {"source": "commands/cpp-guideline-review.md", "target": "commands/cpp-guideline-review.md"},
+        {"source": "references/cpp-coding-standards", "target": "references/cpp-coding-standards"}
       ]
     }
   }
