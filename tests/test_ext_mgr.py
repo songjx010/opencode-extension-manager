@@ -848,3 +848,178 @@ def test_count_stats_empty_type():
     total, enabled, ok = ui._count_stats(exts, "plugin")
     assert total == 0
     assert enabled == 0
+
+
+def test_cascade_simple():
+    resolver = DependencyResolver()
+    exts = {
+        "a": {
+            "type": "skill",
+            "enabled": True,
+            "description": "A",
+            "depends": ["b", {"source": "a.md", "target": "a.md"}],
+        },
+        "b": {
+            "type": "agent",
+            "enabled": True,
+            "description": "B",
+            "depends": [{"source": "b.md", "target": "b.md"}],
+        },
+    }
+    result = resolver.resolve(["b"], exts)
+    assert result["to_enable"] == ["b"]
+    assert result["to_disable"] == ["a"]
+    assert result["cascade_disabled"] == []
+    assert result["rejected"] == []
+
+
+def test_cascade_recursive():
+    resolver = DependencyResolver()
+    exts = {
+        "a": {
+            "type": "skill",
+            "enabled": True,
+            "description": "A",
+            "depends": ["b", {"source": "a.md", "target": "a.md"}],
+        },
+        "b": {
+            "type": "agent",
+            "enabled": True,
+            "description": "B",
+            "depends": ["c", {"source": "b.md", "target": "b.md"}],
+        },
+        "c": {
+            "type": "agent",
+            "enabled": True,
+            "description": "C",
+            "depends": [{"source": "c.md", "target": "c.md"}],
+        },
+    }
+    result = resolver.resolve([], exts)
+    assert result["to_disable"] == ["a"]
+    assert sorted(result["cascade_disabled"]) == ["b", "c"]
+
+
+def test_cascade_stopped_by_other_dependent():
+    resolver = DependencyResolver()
+    exts = {
+        "a": {
+            "type": "skill",
+            "enabled": True,
+            "description": "A",
+            "depends": ["b", {"source": "a.md", "target": "a.md"}],
+        },
+        "b": {
+            "type": "agent",
+            "enabled": True,
+            "description": "B",
+            "depends": ["c", {"source": "b.md", "target": "b.md"}],
+        },
+        "c": {
+            "type": "agent",
+            "enabled": True,
+            "description": "C",
+            "depends": [{"source": "c.md", "target": "c.md"}],
+        },
+        "d": {
+            "type": "skill",
+            "enabled": True,
+            "description": "D",
+            "depends": ["c", {"source": "d.md", "target": "d.md"}],
+        },
+    }
+    result = resolver.resolve(["d"], exts)
+    assert "a" in result["to_disable"]
+    assert "b" in result["cascade_disabled"]
+    assert "c" not in result["cascade_disabled"]
+
+
+def test_cascade_respects_user_selection():
+    resolver = DependencyResolver()
+    exts = {
+        "a": {
+            "type": "skill",
+            "enabled": True,
+            "description": "A",
+            "depends": ["b", {"source": "a.md", "target": "a.md"}],
+        },
+        "b": {
+            "type": "agent",
+            "enabled": True,
+            "description": "B",
+            "depends": [{"source": "b.md", "target": "b.md"}],
+        },
+    }
+    result = resolver.resolve(["b"], exts)
+    assert result["to_enable"] == ["b"]
+    assert "b" not in result["cascade_disabled"]
+
+
+def test_cascade_shared_dep_disabled_together():
+    resolver = DependencyResolver()
+    exts = {
+        "a": {
+            "type": "skill",
+            "enabled": True,
+            "description": "A",
+            "depends": ["c", {"source": "a.md", "target": "a.md"}],
+        },
+        "b": {
+            "type": "skill",
+            "enabled": True,
+            "description": "B",
+            "depends": ["c", {"source": "b.md", "target": "b.md"}],
+        },
+        "c": {
+            "type": "agent",
+            "enabled": True,
+            "description": "C",
+            "depends": [{"source": "c.md", "target": "c.md"}],
+        },
+    }
+    result = resolver.resolve([], exts)
+    assert sorted(result["to_disable"]) == ["a", "b"]
+    assert result["cascade_disabled"] == ["c"]
+
+
+def test_cascade_no_cascade_when_dep_in_selected():
+    resolver = DependencyResolver()
+    exts = {
+        "a": {
+            "type": "skill",
+            "enabled": True,
+            "description": "A",
+            "depends": ["b", {"source": "a.md", "target": "a.md"}],
+        },
+        "b": {
+            "type": "agent",
+            "enabled": True,
+            "description": "B",
+            "depends": [{"source": "b.md", "target": "b.md"}],
+        },
+        "standalone": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Standalone",
+            "depends": [{"source": "s.md", "target": "s.md"}],
+        },
+    }
+    result = resolver.resolve(["standalone"], exts)
+    assert "b" in result["cascade_disabled"]
+    assert "standalone" in result["to_enable"]
+
+
+def test_cascade_with_existing_test_data():
+    resolver = DependencyResolver()
+    exts = _extensions_for_resolver()
+    result = resolver.resolve([], exts)
+    assert "a" in result["to_disable"]
+    assert sorted(result["cascade_disabled"]) == ["b", "c"]
+    assert "standalone" in result["to_disable"]
+
+
+def test_cascade_disabled_in_result_for_no_change():
+    resolver = DependencyResolver()
+    exts = _extensions_for_resolver()
+    result = resolver.resolve(["a", "standalone"], exts)
+    assert result["cascade_disabled"] == []

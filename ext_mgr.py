@@ -173,9 +173,14 @@ class DependencyResolver:
                 )
                 to_disable.discard(name)
 
+        cascade_disabled = self._cascade_disable(
+            to_enable, to_disable, extensions
+        )
+
         return {
             "to_enable": sorted(to_enable),
             "to_disable": sorted(to_disable),
+            "cascade_disabled": sorted(cascade_disabled),
             "rejected": rejected,
         }
 
@@ -198,6 +203,46 @@ class DependencyResolver:
                 if name in ext_deps:
                     dependents.append(ext_name)
         return sorted(dependents)
+
+    def _find_dependents_excluding(
+        self, name: str, extensions: dict, candidates: set, excluded: set
+    ) -> list:
+        dependents = []
+        for ext_name, ext_data in extensions.items():
+            if ext_name in excluded:
+                continue
+            if ext_name not in candidates:
+                continue
+            ext_deps, _ = parse_depends(ext_data.get("depends", []))
+            if name in ext_deps:
+                dependents.append(ext_name)
+        return sorted(dependents)
+
+    def _cascade_disable(
+        self, to_enable: set, to_disable: set, extensions: dict
+    ) -> set:
+        cascade_disabled = set()
+        changed = True
+        while changed:
+            changed = False
+            for name in list(to_disable):
+                dependents = self._find_all_dependents_of(name, extensions)
+                if not dependents:
+                    continue
+                all_disabled = to_disable | cascade_disabled
+                if all(d in all_disabled for d in dependents):
+                    to_disable.discard(name)
+                    cascade_disabled.add(name)
+                    changed = True
+        return cascade_disabled
+
+    def _find_all_dependents_of(self, name: str, extensions: dict) -> list:
+        dependents = []
+        for ext_name, ext_data in extensions.items():
+            ext_deps, _ = parse_depends(ext_data.get("depends", []))
+            if name in ext_deps:
+                dependents.append(ext_name)
+        return dependents
 
 
 class SymlinkManager:
