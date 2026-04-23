@@ -1023,3 +1023,59 @@ def test_cascade_disabled_in_result_for_no_change():
     exts = _extensions_for_resolver()
     result = resolver.resolve(["a", "standalone"], exts)
     assert result["cascade_disabled"] == []
+
+
+def _make_ui_for_summary():
+    adapter = MagicMock()
+    config_mgr = MagicMock()
+    adapter.run_yesno.return_value = 0
+    ui = DialogUI(adapter, config_mgr, "/fake")
+    return ui, adapter
+
+
+def test_show_change_summary_with_cascade():
+    ui, adapter = _make_ui_for_summary()
+    changes = {
+        "to_enable": ["x"],
+        "to_disable": ["a"],
+        "cascade_disabled": ["b", "c"],
+        "rejected": [],
+    }
+    ui.show_change_summary(changes)
+    call_args = adapter.run_yesno.call_args
+    text = call_args[0][1]
+    assert "禁用" in text
+    assert "级联禁用" in text
+    assert "b" in text
+    assert "c" in text
+
+
+def test_show_change_summary_no_cascade():
+    ui, adapter = _make_ui_for_summary()
+    changes = {
+        "to_enable": ["x"],
+        "to_disable": ["a"],
+        "cascade_disabled": [],
+        "rejected": [],
+    }
+    ui.show_change_summary(changes)
+    call_args = adapter.run_yesno.call_args
+    text = call_args[0][1]
+    assert "级联禁用" not in text
+
+
+def test_show_change_summary_cascade_before_rejected():
+    ui, adapter = _make_ui_for_summary()
+    changes = {
+        "to_enable": [],
+        "to_disable": ["a"],
+        "cascade_disabled": ["b"],
+        "rejected": [{"name": "c", "reason": "被依赖", "dependents": ["d"]}],
+    }
+    ui.show_change_summary(changes)
+    call_args = adapter.run_yesno.call_args
+    text = call_args[0][1]
+    lines = text.split("\n")
+    cascade_idx = next(i for i, l in enumerate(lines) if "级联禁用" in l)
+    rejected_idx = next(i for i, l in enumerate(lines) if "拒绝禁用" in l)
+    assert cascade_idx < rejected_idx

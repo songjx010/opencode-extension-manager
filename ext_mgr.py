@@ -699,9 +699,17 @@ class DialogUI:
             lines.append("\\Zb\\Z1禁用:\\Zn")
             for n in changes["to_disable"]:
                 lines.append(f"  - {n}")
+        if changes.get("cascade_disabled"):
+            lines.append("")
+            lines.append("\\Zb\\Z3级联禁用:\\Zn")
+            for n in changes["cascade_disabled"]:
+                lines.append(f"  ~ {n}")
         if changes.get("rejected"):
             for r in changes["rejected"]:
-                lines.append(f"拒绝禁用 {r['name']}: {r['reason']} ({', '.join(r.get('dependents', []))})")
+                lines.append(
+                    f"拒绝禁用 {r['name']}: {r['reason']} "
+                    f"({', '.join(r.get('dependents', []))})"
+                )
         return self._adapter.run_yesno("确认", "\n".join(lines)) == 0
 
     def show_results(self, results: list) -> None:
@@ -792,15 +800,17 @@ def main():
         if not ui.show_change_summary(changes):
             continue
 
+        all_disable = changes["to_disable"] + changes["cascade_disabled"]
+
         results = symlink_mgr.apply_changes(
-            changes["to_enable"], changes["to_disable"], extensions
+            changes["to_enable"], all_disable, extensions
         )
         ui.show_results(results)
 
         for name in changes["to_enable"]:
             if name in extensions:
                 extensions[name]["enabled"] = True
-        for name in changes["to_disable"]:
+        for name in all_disable:
             if name in extensions:
                 extensions[name]["enabled"] = False
 
