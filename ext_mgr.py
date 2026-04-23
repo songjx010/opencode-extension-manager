@@ -554,6 +554,31 @@ class DialogUI:
         pad = width - self._visible_len(label)
         return label + " " * max(pad, 1)
 
+    def _cascade_disable_deps(self, disabled: set, extensions: dict) -> None:
+        queue = list(disabled)
+        visited = set()
+        while queue:
+            name = queue.pop(0)
+            if name in visited:
+                continue
+            visited.add(name)
+            ext_deps, _ = parse_depends(
+                extensions.get(name, {}).get("depends", [])
+            )
+            for dep in ext_deps:
+                if dep in extensions and extensions[dep].get("enabled", False):
+                    still_needed = False
+                    for ext_name, ext_data in extensions.items():
+                        if ext_name == name or not ext_data.get("enabled", False):
+                            continue
+                        dep_list, _ = parse_depends(ext_data.get("depends", []))
+                        if dep in dep_list:
+                            still_needed = True
+                            break
+                    if not still_needed:
+                        extensions[dep]["enabled"] = False
+                        queue.append(dep)
+
     def _check_availability(self, name: str, extensions: dict) -> list:
         missing = []
         ext_deps, path_deps = parse_depends(
@@ -679,9 +704,19 @@ class DialogUI:
                 )
                 continue
 
+            newly_enabled = set()
+            newly_disabled = set()
             for name, ext in extensions.items():
                 if ext.get("type") == ext_type:
-                    ext["enabled"] = name in selected
+                    was_enabled = ext.get("enabled", False)
+                    now_enabled = name in selected
+                    ext["enabled"] = now_enabled
+                    if not was_enabled and now_enabled:
+                        newly_enabled.add(name)
+                    elif was_enabled and not now_enabled:
+                        newly_disabled.add(name)
+
+            self._cascade_disable_deps(newly_disabled, extensions)
 
             items, unavailable = self._build_checklist_items(
                 extensions, ext_type

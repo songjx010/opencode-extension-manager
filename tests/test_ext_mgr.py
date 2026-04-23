@@ -1079,3 +1079,100 @@ def test_show_change_summary_cascade_before_rejected():
     cascade_idx = next(i for i, l in enumerate(lines) if "级联禁用" in l)
     rejected_idx = next(i for i, l in enumerate(lines) if "拒绝禁用" in l)
     assert cascade_idx < rejected_idx
+
+
+def test_cascade_disable_deps_disables_child():
+    ui = _make_ui()
+    exts = {
+        "parent": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Parent",
+            "depends": ["child"],
+        },
+        "child": {
+            "type": "agent",
+            "enabled": True,
+            "description": "Child",
+            "depends": [],
+        },
+    }
+    ui._cascade_disable_deps({"parent"}, exts)
+    assert exts["child"]["enabled"] is False
+
+
+def test_cascade_disable_deps_keeps_child_if_other_parent_enabled():
+    ui = _make_ui()
+    exts = {
+        "parent-a": {
+            "type": "skill",
+            "enabled": False,
+            "description": "Parent A",
+            "depends": ["shared-child"],
+        },
+        "parent-b": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Parent B",
+            "depends": ["shared-child"],
+        },
+        "shared-child": {
+            "type": "agent",
+            "enabled": True,
+            "description": "Shared Child",
+            "depends": [],
+        },
+    }
+    ui._cascade_disable_deps({"parent-a"}, exts)
+    assert exts["shared-child"]["enabled"] is True
+
+
+def test_cascade_disable_deps_transitive():
+    ui = _make_ui()
+    exts = {
+        "parent": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Parent",
+            "depends": ["mid"],
+        },
+        "mid": {
+            "type": "agent",
+            "enabled": True,
+            "description": "Mid",
+            "depends": ["leaf"],
+        },
+        "leaf": {
+            "type": "agent",
+            "enabled": True,
+            "description": "Leaf",
+            "depends": [],
+        },
+    }
+    ui._cascade_disable_deps({"parent"}, exts)
+    assert exts["mid"]["enabled"] is False
+    assert exts["leaf"]["enabled"] is False
+
+
+def test_show_type_checklist_cascades_disable_across_types():
+    adapter = MagicMock()
+    config_mgr = MagicMock()
+    ui = DialogUI(adapter, config_mgr, "/fake")
+    exts = {
+        "parent": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Parent skill",
+            "depends": ["child-agent"],
+        },
+        "child-agent": {
+            "type": "agent",
+            "enabled": True,
+            "description": "Child agent",
+            "depends": [],
+        },
+    }
+    adapter.run_checklist.return_value = (0, [], [])
+    ui._show_type_checklist(exts, "skill")
+    assert exts["parent"]["enabled"] is False
+    assert exts["child-agent"]["enabled"] is False

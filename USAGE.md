@@ -11,26 +11,13 @@
 | Python | 3.8+ | 系统自带或 `sudo apt install python3` |
 | dialog | 任意版本 | `sudo apt install dialog`（Debian/Ubuntu）或 `sudo yum install dialog`（RHEL/CentOS） |
 
-## 环境初始化
+## 环境配置
 
-### 方式一：自动初始化（推荐）
-
-```bash
-cd /path/to/opencode-extension-manager
-bash init.sh
-```
-
-此脚本会创建 Python 虚拟环境并安装测试依赖（pytest、pytest-cov、mutmut）。
-
-### 方式二：手动安装依赖
-
-如果 `init.sh` 执行失败，可按以下步骤手动操作：
-
-#### 1. 安装系统依赖
+### 1. 安装系统依赖
 
 ```bash
 # Debian / Ubuntu
-sudo apt install python3 python3-pip python3-venv dialog
+sudo apt install python3 python3-pip dialog
 
 # RHEL / CentOS
 sudo yum install python3 python3-pip dialog
@@ -39,37 +26,19 @@ sudo yum install python3 python3-pip dialog
 sudo pacman -S python python-pip dialog
 ```
 
-#### 2. 创建虚拟环境
+### 2. 安装测试依赖
 
 ```bash
-python3 -m venv .venv
-```
-
-如果报错 `No module named '_ssl'` 或 `ensurepip`，先安装缺失的系统包：
-
-```bash
-# Debian / Ubuntu
-sudo apt install python3-distutils python3-venv
-
-# 如果 pip 模块缺失
-python3 -m ensurepip --upgrade
-```
-
-#### 3. 激活虚拟环境并安装 Python 依赖
-
-```bash
-source .venv/bin/activate
-pip install --upgrade pip
-pip install pytest pytest-cov mutmut
+pip3 install pytest pytest-cov mutmut
 ```
 
 如果默认 pip 源速度慢，可使用国内镜像：
 
 ```bash
-pip install -i https://pypi.tuna.tsinghua.edu.cn/simple pytest pytest-cov mutmut
+pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple pytest pytest-cov mutmut
 ```
 
-#### 4. 验证安装
+### 3. 验证安装
 
 ```bash
 python3 --version          # 应为 3.8+
@@ -77,7 +46,7 @@ dialog --version           # 应有输出
 pytest --version           # 应有输出
 ```
 
-> 注意：运行 `ext_mgr.py` 本身只需要 Python 3.8+ 和 `dialog`，无需虚拟环境。`pytest`/`pytest-cov`/`mutmut` 仅开发和测试时需要。
+> 注意：运行 `ext_mgr.py` 本身只需要 Python 3.8+ 和 `dialog`。`pytest`/`pytest-cov`/`mutmut` 仅开发和测试时需要。
 
 ## 目录结构
 
@@ -85,9 +54,10 @@ pytest --version           # 应有输出
 opencode-extension-manager/
 ├── ext_mgr.py              # 主脚本（运行此文件）
 ├── extensions.json          # 扩展配置文件（version 2 格式）
-├── init.sh                  # 环境初始化脚本
 ├── tests/                   # 测试文件
-├── docs/                    # 文档
+│   ├── test_ext_mgr.py      # 测试用例
+│   └── conftest.py          # 测试 fixtures
+├── docs/plans/              # 设计文档与需求文档
 └── ...                      # 扩展源文件（skills/, agents/, commands/ 等目录）
 ```
 
@@ -143,7 +113,7 @@ opencode-extension-manager/
 
 `depends` 列表支持两种条目：
 
-**扩展依赖**（字符串）：引用另一个扩展的键名。启用时递归展开，自动将依赖扩展也标记为启用。
+**扩展依赖**（字符串）：引用另一个扩展的键名。启用时递归展开，自动将依赖扩展也标记为启用。禁用时若依赖扩展成为孤儿（无其他已启用扩展依赖它），则自动级联禁用。
 
 ```json
 "depends": ["other-extension"]
@@ -166,36 +136,49 @@ opencode-extension-manager/
   "extensions": {
     "brainstorming": {
       "type": "skill",
-      "enabled": false,
+      "enabled": true,
       "description": "结构化头脑风暴",
       "depends": [
         {"source": "skills/brainstorming", "target": "skills/brainstorming"}
       ]
     },
-    "code-review-enhanced": {
+    "diagram-generator": {
       "type": "skill",
       "enabled": false,
-      "description": "深度代码审查",
+      "description": "生成架构图和流程图",
       "depends": [
-        "brainstorming",
-        {"source": "skills/code-review-enhanced", "target": "skills/code-review-enhanced"}
+        {"source": "skills/diagram-generator", "target": "skills/diagram-generator"}
       ]
     },
-    "cpp-reviewer": {
+    "kernel-side-code-developer": {
       "type": "agent",
       "enabled": true,
-      "description": "C++代码审查代理",
+      "description": "Kernel侧代码开发",
       "depends": [
-        {"source": "agents/cpp-reviewer.md", "target": "agents/cpp-reviewer.md"}
+        {"source": "agents/kernel-side-code-developer.md", "target": "agents/kernel-side-code-developer.md"}
       ]
     },
-    "complex-task": {
+    "ascend-c-integrated-development": {
+      "type": "skill",
+      "enabled": true,
+      "description": "Ascend C自定义算子全流程开发",
+      "depends": [
+        "kernel-side-code-developer",
+        "host-side-code-developer",
+        "onnx-plugin-developer",
+        {"source": "skills/ascend-c-integrated-development", "target": "skills/ascend-c-integrated-development"}
+      ]
+    },
+    "cpp-code-review": {
       "type": "command",
       "enabled": false,
-      "description": "编排复杂多步骤任务",
+      "description": "C++逻辑缺陷检测",
       "depends": [
-        "brainstorming",
-        {"source": "commands/complex-task.md", "target": "commands/complex-task.md"}
+        "cpp-memory-reviewer",
+        "cpp-concurrency-reviewer",
+        "cpp-logic-reviewer",
+        "cpp-bug-scorer",
+        {"source": "commands/cpp-code-review.md", "target": "commands/cpp-code-review.md"}
       ]
     }
   }
@@ -205,7 +188,6 @@ opencode-extension-manager/
 ## 运行
 
 ```bash
-source .venv/bin/activate
 python3 ext_mgr.py
 ```
 
@@ -227,38 +209,50 @@ python3 ext_mgr.py
 - **Commands — 命令编排**
 - **Plugins — 插件扩展**
 
-每个分类显示启用数/总数和可用数/总数。选择分类进入对应的 checklist 界面。
+每个分类显示启用数/总数和可用数/总数。选择分类进入对应的 checklist 界面，或直接选择「确认并应用变更」。
 
 ### 3. Checklist 界面
 
 进入某一类型的 checklist 界面，显示该类型下所有扩展：
 
 - 已启用的扩展（`enabled: true`）默认被选中（带 `*` 标记）
-- 状态标记：`OK` 表示依赖齐全，`!!` 表示缺失依赖（不可选）
+- 状态标记：`OK` 表示依赖齐全，`!!` 表示缺失依赖（不可选，强制取消勾选）
 - 用方向键移动光标，**空格键** 切换选中/取消选中
-- 选择完成后按 **OK** 提交
+- 选择完成后按 **OK** 提交，按 **Cancel** 返回主界面
 
 ### 4. 依赖自动处理
 
-提交选择后，系统自动处理依赖关系：
+在 checklist 界面提交选择后，系统即时处理依赖关系：
 
 - **启用扩展时**：递归展开 `depends` 中的扩展依赖，自动将所有被依赖的扩展也标记为 `enabled=true`
-- **禁用扩展时**：递归级联清理孤儿依赖——如果被禁用扩展的子扩展不再被任何其他已启用扩展依赖，则自动级联禁用该子扩展。如果被禁用的扩展被其他已启用的扩展依赖，则拒绝禁用
+- **禁用扩展时**：递归级联清理孤儿依赖——如果被禁用扩展的子扩展不再被任何其他已启用扩展依赖，则自动级联禁用该子扩展
+
+级联禁用后返回主界面，扩展状态已更新。
 
 ### 5. 确认变更
 
-弹出变更摘要对话框：
+在主界面选择「确认并应用变更」后，弹出变更摘要对话框：
 
-- 列出将要启用、禁用和级联禁用的扩展
-- **禁用**：用户明确取消选中的扩展
-- **级联禁用**：因禁用扩展而自动清理的孤儿依赖扩展
-- 按 **Yes** 确认执行，按 **No** 返回重新选择
+- 列出将要**启用**的扩展（`+` 标记）
+- 列出将要**禁用**的扩展（`-` 标记，用户明确取消选中的扩展）
+- 列出将要**级联禁用**的扩展（`~` 标记，因禁用扩展而自动清理的孤儿依赖扩展）
+- 若被禁用的扩展仍被其他已启用扩展依赖，则拒绝禁用并提示
+
+按 **Yes** 确认执行，按 **No** 返回主界面。
 
 ### 6. 查看结果
 
 执行完成后弹出操作结果：
 
-- 每个路径依赖显示操作状态：`success`（成功）、`conflict`（目标路径冲突）、`skipped`（无需操作）、`error`（系统错误）
+- 每个路径依赖显示操作状态：
+  - `success`（成功创建/删除符号链接）
+  - `conflict`（目标路径冲突）
+  - `skipped`（无需操作）
+  - `error`（系统错误）
+
+### 7. 配置回写
+
+操作完成后，`extensions.json` 中对应扩展的 `enabled` 字段更新为实际状态（含级联禁用的扩展），配置通过原子写入（先写临时文件再 replace）确保数据安全。
 
 ## 符号链接规则
 
@@ -267,7 +261,7 @@ python3 ext_mgr.py
 对扩展 `depends` 中的每个路径依赖项，在目标目录下创建符号链接：
 
 ```
-~/.config/opencode/skills/brainstorming.md → /源目录/skills/brainstorming.md
+~/.config/opencode/skills/brainstorming → /源目录/skills/brainstorming
 ```
 
 - 目标路径的子目录不存在时自动创建
@@ -276,11 +270,7 @@ python3 ext_mgr.py
 
 ### 禁用扩展
 
-仅删除该扩展自身 `depends` 中路径依赖对应的符号链接。不删除其依赖扩展的符号链接。
-
-### 配置回写
-
-操作完成后，`extensions.json` 中对应扩展的 `enabled` 字段更新为用户选择的状态。
+仅删除该扩展自身 `depends` 中路径依赖对应的符号链接。级联禁用的扩展同样会删除其路径依赖的符号链接。
 
 ## 常见问题
 
@@ -351,7 +341,6 @@ python3 ext_mgr.py
 ## 运行测试
 
 ```bash
-source .venv/bin/activate
 pytest tests/ -v                              # 运行全部测试
 pytest --cov=ext_mgr --cov-branch tests/      # 带覆盖率
 ```
