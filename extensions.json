@@ -169,6 +169,21 @@
         ]
       }
     },
-    "plugins": {}
+    "plugins": {
+      "opencode-context-compress": {
+        "enabled": false,
+        "description": "opencode上下文压缩工具",
+        "depends": [
+          {
+            "source": "/home/songjx/work/code/github/opencode-context-compress-sync/dist/index.js",
+            "target": "plugins/occ.js"
+          },
+          {
+            "source": "/home/songjx/work/code/github/opencode-context-compress-sync/dist/occ.example.jsonc",
+            "target": "occ.jsonc"
+          }
+        ]
+      }
+    }
   }
 }
