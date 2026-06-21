@@ -1,8 +1,15 @@
-# opencode 扩展管理器 — 使用指导
+# opencode 扩展管理器
 
-## 概述
+一个 Linux 终端下的交互式扩展管理器，通过 `dialog` TUI 界面管理 opencode 扩展的启用/禁用。扩展以**符号链接**的形式安装到目标目录（默认 `~/.config/opencode`），无需复制文件，干净可逆。
 
-本工具是一个 Linux 终端下的交互式扩展管理器，通过 `dialog` TUI 界面管理 opencode 扩展的启用/禁用。扩展以**符号链接**的形式安装到目标目录（默认 `~/.config/opencode`），无需复制文件。
+## 特性
+
+- **TUI 勾选界面**：基于 `dialog` 的 checklist，按扩展分类（技能 / 智能体 / 命令编排 / 插件）分组管理
+- **依赖自动管理**：启用时递归展开扩展依赖，禁用时级联清理孤儿依赖
+- **符号链接安装**：以符号链接方式安装/卸载，不复制文件，支持冲突检测
+- **原子配置回写**：配置变更通过临时文件 + `os.replace` 原子写入，保证数据安全
+- **可用性检查**：实时检测缺失依赖，缺失的扩展在界面中标记并禁止勾选
+- **隐藏扩展**：`visible: false` 的扩展不进入勾选列表，但仍参与依赖管理
 
 ## 前置条件
 
@@ -11,55 +18,35 @@
 | Python | 3.8+ | 系统自带或 `sudo apt install python3` |
 | dialog | 任意版本 | `sudo apt install dialog`（Debian/Ubuntu）或 `sudo yum install dialog`（RHEL/CentOS） |
 
-## 环境配置
-
-### 1. 安装系统依赖
+## 快速开始
 
 ```bash
-# Debian / Ubuntu
-sudo apt install python3 python3-pip dialog
+# 1. 安装系统依赖
+sudo apt install python3 dialog          # Debian/Ubuntu
 
-# RHEL / CentOS
-sudo yum install python3 python3-pip dialog
-
-# Arch Linux
-sudo pacman -S python python-pip dialog
+# 2. 进入仓库目录运行
+python3 ext_mgr.py
 ```
 
-### 2. 安装测试依赖
-
-```bash
-pip3 install pytest pytest-cov mutmut
-```
-
-如果默认 pip 源速度慢，可使用国内镜像：
-
-```bash
-pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple pytest pytest-cov mutmut
-```
-
-### 3. 验证安装
-
-```bash
-python3 --version          # 应为 3.8+
-dialog --version           # 应有输出
-pytest --version           # 应有输出
-```
-
-> 注意：运行 `ext_mgr.py` 本身只需要 Python 3.8+ 和 `dialog`。`pytest`/`pytest-cov`/`mutmut` 仅开发和测试时需要。
+启动后输入目标目录（默认 `~/.config/opencode`），即可在 TUI 中勾选扩展并应用变更。
 
 ## 目录结构
 
 ```
 opencode-extension-manager/
-├── ext_mgr.py              # 主脚本（运行此文件）
+├── ext_mgr.py              # 主程序（单文件，运行此文件）
 ├── extensions.json          # 扩展配置文件（version 3 格式）
-├── tests/                   # 测试文件
+├── tests/
 │   ├── test_ext_mgr.py      # 测试用例
-│   └── conftest.py          # 测试 fixtures
-├── docs/plans/              # 设计文档与需求文档
-└── ...                      # 扩展源文件（skills/, agents/, commands/ 等目录）
+│   └── conftest.py          # 测试路径 fixtures
+├── docs/plans/              # 设计文档与需求文档（SRS / 设计 / 计划）
+├── LICENSE                  # Apache License 2.0
+└── README.md
 ```
+
+> `ext_mgr.py` 为单文件架构，内部按职责划分为数据模型、配置管理、领域状态、符号链接、校验、TUI 适配等多个模块（详见下文[架构](#架构)）。
+>
+> 扩展源文件（`skills/`、`agents/`、`commands/` 等目录）由用户自行放入仓库根目录，其路径在 `extensions.json` 的 `depends` 中以 `source` 引用。
 
 ## 配置文件格式
 
@@ -72,6 +59,7 @@ opencode-extension-manager/
     "skills": {
       "<extension-name>": {
         "enabled": true,
+        "visible": true,
         "description": "扩展的描述信息",
         "depends": [
           "<other-extension-name>",
@@ -99,9 +87,9 @@ opencode-extension-manager/
 | `extensions.commands` | object | 否 | 命令编排扩展组 |
 | `extensions.plugins` | object | 否 | 插件扩展组 |
 | `enabled` | boolean | 是 | 初始启用状态 |
+| `visible` | boolean | 否 | 是否在 TUI 管理界面显示此扩展，默认 `true`。设为 `false` 的扩展仅作为其他扩展的依赖被自动管理，不出现在勾选列表中。保存时无论取值均会写回配置文件 |
 | `description` | string | 是 | 扩展描述（在 TUI 中显示） |
 | `depends` | array | 否 | 依赖列表，支持扩展依赖（字符串）和路径依赖（对象）混合 |
-| `visible` | boolean | 否 | 是否在 TUI 管理界面显示此扩展，默认 `true`。设为 `false` 的扩展仅作为其他扩展的依赖被自动管理，不出现在勾选列表中 |
 
 ### 分类组
 
@@ -142,6 +130,7 @@ opencode-extension-manager/
     "skills": {
       "brainstorming": {
         "enabled": true,
+        "visible": true,
         "description": "结构化头脑风暴",
         "depends": [
           {"source": "skills/brainstorming", "target": "skills/brainstorming"}
@@ -149,6 +138,7 @@ opencode-extension-manager/
       },
       "diagram-generator": {
         "enabled": false,
+        "visible": true,
         "description": "生成架构图和流程图",
         "depends": [
           {"source": "skills/diagram-generator", "target": "skills/diagram-generator"}
@@ -156,6 +146,7 @@ opencode-extension-manager/
       },
       "ascend-c-integrated-development": {
         "enabled": true,
+        "visible": true,
         "description": "Ascend C自定义算子全流程开发",
         "depends": [
           "kernel-side-code-developer",
@@ -178,6 +169,7 @@ opencode-extension-manager/
     "commands": {
       "cpp-code-review": {
         "enabled": false,
+        "visible": true,
         "description": "C++逻辑缺陷检测",
         "depends": [
           "cpp-memory-reviewer",
@@ -195,6 +187,8 @@ opencode-extension-manager/
 
 上例中 `kernel-side-code-developer` 设为 `visible: false`，它仅作为 `ascend-c-integrated-development` 的依赖被自动启用/级联禁用，不会出现在 TUI 勾选界面中。
 
+> **保存行为**：配置回写时每个扩展的键顺序固定为 `enabled` → `visible` → `description` → `depends`，其中 `visible` 无论取值均会写入。
+
 ## 运行
 
 ```bash
@@ -209,60 +203,61 @@ python3 ext_mgr.py
 
 - 输入自定义路径后按 **OK** 确认
 - 按 **Cancel** 退出脚本
+- 输入为空时会提示「目标目录不能为空」并重新输入
 
 ### 2. 扩展分类主界面
 
-主界面按扩展分类（`skills`/`agents`/`commands`/`plugins` 分类组）分组显示。设为 `visible: false` 的扩展不出现在列表中，但仍参与依赖管理：
+主界面按扩展分类（`skills`/`agents`/`commands`/`plugins`）分组显示。设为 `visible: false` 的扩展不出现在列表中，但仍参与依赖管理：
 
 - **Skills — 技能扩展**
 - **Agents — 智能体**
 - **Commands — 命令编排**
 - **Plugins — 插件扩展**
 
-每个分类显示启用数/总数和可用数/总数。选择分类进入对应的 checklist 界面，或直接选择「确认并应用变更」。
+每个分类显示 `启用数/总数` 与 `可用数/总数`。选择分类进入对应的 checklist 界面，或直接选择「确认并应用变更」/「退出」。
 
 ### 3. Checklist 界面
 
-进入某一类型的 checklist 界面，显示该类型下所有扩展：
+进入某一类型的 checklist 界面，显示该类型下所有可见扩展：
 
 - 已启用的扩展（`enabled: true`）默认被选中（带 `*` 标记）
 - 状态标记：`OK` 表示依赖齐全，`!!` 表示缺失依赖（不可选，强制取消勾选）
 - 用方向键移动光标，**空格键** 切换选中/取消选中
-- 选择完成后按 **OK** 提交，按 **Cancel** 返回主界面
+- 选择完成后按 **OK** 提交（即时触发当前分类内的级联禁用并刷新列表），按 **Cancel** 返回主界面
+- 若勾选了缺失依赖的扩展，会弹出错误提示要求取消勾选后重试
 
-### 4. 依赖自动处理
+### 4. 确认变更
 
-在 checklist 界面提交选择后，系统即时处理依赖关系：
+在主界面选择「确认并应用变更」后，系统计算完整变更集：
 
-- **启用扩展时**：递归展开 `depends` 中的扩展依赖，自动将所有被依赖的扩展也标记为 `enabled=true`
-- **禁用扩展时**：递归级联清理孤儿依赖——如果被禁用扩展的子扩展不再被任何其他已启用扩展依赖，则自动级联禁用该子扩展
-
-级联禁用后返回主界面，扩展状态已更新。
-
-### 5. 确认变更
-
-在主界面选择「确认并应用变更」后，弹出变更摘要对话框：
-
-- 列出将要**启用**的扩展（`+` 标记）
-- 列出将要**禁用**的扩展（`-` 标记，用户明确取消选中的扩展）
-- 列出将要**级联禁用**的扩展（`~` 标记，因禁用扩展而自动清理的孤儿依赖扩展）
-- 若被禁用的扩展仍被其他已启用扩展依赖，则拒绝禁用并提示
+- 若存在被已选择扩展依赖、无法禁用的扩展，则弹出错误提示并返回主界面，**不应用任何变更**
+- 否则弹出变更摘要对话框：
+  - 列出将要**启用**的扩展（`+` 标记）
+  - 列出将要**禁用**的扩展（`-` 标记，用户明确取消选中的扩展）
+  - 列出将要**级联禁用**的扩展（`~` 标记，因禁用扩展而自动清理的孤儿依赖扩展）
 
 按 **Yes** 确认执行，按 **No** 返回主界面。
 
+### 5. 依赖自动处理
+
+应用变更时，系统按以下规则处理依赖关系：
+
+- **启用扩展时**：递归展开 `depends` 中的扩展依赖，自动将所有被依赖的扩展也标记为 `enabled=true`
+- **禁用扩展时**：递归级联清理孤儿依赖——如果被禁用扩展的子依赖不再被任何其他已启用扩展依赖，则自动级联禁用该依赖
+- **拒绝禁用**：若被禁用的扩展仍被其他已启用扩展依赖，则拒绝禁用并提示
+
 ### 6. 查看结果
 
-执行完成后弹出操作结果：
+执行完成后弹出操作结果，按状态分组显示：
 
-- 每个路径依赖显示操作状态：
-  - `success`（成功创建/删除符号链接）
-  - `conflict`（目标路径冲突）
-  - `skipped`（无需操作）
-  - `error`（系统错误）
+- `success`（成功创建/删除符号链接）
+- `skipped`（无需操作，如无路径依赖或链接已正确）
+- `conflict`（目标路径冲突）
+- `error`（系统错误）
 
 ### 7. 配置回写
 
-操作完成后，`extensions.json` 中对应扩展的 `enabled` 字段更新为实际状态（含级联禁用的扩展），配置通过原子写入（先写临时文件再 replace）确保数据安全。
+操作完成后，`extensions.json` 中对应扩展的 `enabled`、`visible` 字段更新为实际状态（含级联禁用的扩展），配置通过原子写入（先写临时文件再 `os.replace`）确保数据安全。
 
 ## 符号链接规则
 
@@ -280,7 +275,50 @@ python3 ext_mgr.py
 
 ### 禁用扩展
 
-仅删除该扩展自身 `depends` 中路径依赖对应的符号链接。级联禁用的扩展同样会删除其路径依赖的符号链接。
+仅删除该扩展自身 `depends` 中路径依赖对应的符号链接。级联禁用的扩展同样会删除其路径依赖的符号链接。若链接指向非预期目标则报告 `conflict`，不会误删。
+
+## 架构
+
+`ext_mgr.py` 采用单文件分层架构，各组件职责清晰、单向依赖（UI / I/O 层 → 领域层 → 数据模型）：
+
+### 数据模型
+
+| 组件 | 职责 |
+|------|------|
+| `Extension` | 单个扩展的领域模型（name / type / enabled / visible / ext_deps / path_deps） |
+| `PathDep` | 路径依赖（source → target 符号链接映射） |
+| `Config` | 整体配置，`extensions` 为扁平 `dict[name -> Extension]` |
+| `ChangeSet` | 变更解析的不可变返回值（to_enable / to_disable / cascade_disabled / rejected） |
+
+### 领域层
+
+| 组件 | 职责 |
+|------|------|
+| `ExtensionStore` | 扩展状态的唯一拥有者，封装 toggle / 级联 / 解析 / 可用性检查等所有领域操作。UI 与 I/O 层通过它访问状态 |
+| `DependencyGraph` | 会话内单例的依赖邻接表（forward / reverse），由 `ExtensionStore` 构造一次 |
+
+### I/O 层
+
+| 组件 | 职责 |
+|------|------|
+| `ConfigManager` | 加载 / 校验 / 保存 `extensions.json`，处理原子写入与 `extra` 未知字段保留 |
+| `SymlinkManager` | 创建 / 删除符号链接，返回带状态的结果列表 |
+| `Validator` | 编程式符号链接状态校验（独立工具，未接入 `main()` 运行时主循环） |
+
+### TUI 层
+
+| 组件 | 职责 |
+|------|------|
+| `DialogAdapter` | `dialog` 命令的薄封装（menu / checklist / inputbox / msgbox / yesno），自适应终端尺寸 |
+| `DialogUI` | 应用 TUI 编排：目标目录询问、分类主界面、checklist、变更摘要、结果展示 |
+
+### 常量
+
+| 组件 | 职责 |
+|------|------|
+| `Status` | 操作结果状态枚举（success / skipped / conflict / error / missing / broken / unexpected / ok） |
+| `Format` | `dialog` 颜色/样式转义常量 |
+| `GROUP_TO_TYPE` / `TYPE_TO_GROUP` | 分类组与扩展类型的双向映射 |
 
 ## 常见问题
 
@@ -370,3 +408,12 @@ python3 ext_mgr.py
 pytest tests/ -v                              # 运行全部测试
 pytest --cov=ext_mgr --cov-branch tests/      # 带覆盖率
 ```
+
+> 仅运行 `ext_mgr.py` 本身只需要 Python 3.8+ 和 `dialog`；`pytest`/`pytest-cov` 仅开发和测试时需要：
+> ```bash
+> pip3 install pytest pytest-cov
+> ```
+
+## 许可证
+
+[Apache License 2.0](LICENSE)
