@@ -210,14 +210,14 @@ def test_save_produces_nested_format(tmp_path):
     assert "type" not in raw["extensions"]["skills"]["brainstorming"]
 
 
-def test_save_omits_default_visible(tmp_path):
+def test_save_always_writes_visible(tmp_path):
     p = _write_config(tmp_path, _valid_config())
     mgr = ConfigManager(p)
     config = mgr.load()
     mgr.save(config)
     with open(p, "r", encoding="utf-8") as f:
         raw = json.load(f)
-    assert "visible" not in raw["extensions"]["skills"]["brainstorming"]
+    assert raw["extensions"]["skills"]["brainstorming"]["visible"] is True
 
 
 def test_save_preserves_key_order(tmp_path):
@@ -247,7 +247,7 @@ def test_save_preserves_key_order(tmp_path):
     with open(p, "r", encoding="utf-8") as f:
         saved = json.load(f)
     skills = saved["extensions"]["skills"]
-    assert list(skills["visible-default"].keys()) == ["enabled", "description", "depends"]
+    assert list(skills["visible-default"].keys()) == ["enabled", "visible", "description", "depends"]
     assert list(skills["hidden"].keys()) == ["enabled", "visible", "description", "depends"]
 
 

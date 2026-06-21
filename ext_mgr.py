@@ -128,9 +128,7 @@ class ConfigManager:
             group = TYPE_TO_GROUP.get(ext.type)
             if group is None:
                 continue
-            ext_data = {"enabled": ext.enabled}
-            if not ext.visible:
-                ext_data["visible"] = False
+            ext_data = {"enabled": ext.enabled, "visible": ext.visible}
             ext_data["description"] = ext.description
             deps = list(ext.ext_deps) + [
                 {"source": p.source, "target": p.target} for p in ext.path_deps
