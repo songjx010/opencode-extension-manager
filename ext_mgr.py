@@ -521,6 +521,65 @@ class SymlinkManager:
         os.makedirs(dir_path, exist_ok=True)
 
 
+class NpmDependencyManager:
+    """使能 plugin 扩展时，在其 source 目录的 package.json 所在处执行 npm install。"""
+
+    NPM_INSTALL_TIMEOUT = 300
+
+    def __init__(self, source_dir: str):
+        self._source_dir = os.path.abspath(source_dir)
+
+    def install_for(self, to_enable, extensions):
+        """对 to_enable 中的 plugin 扩展，定位 source 目录下的 package.json，
+        在该目录执行 npm install。返回 [{name, status, detail}] 结果列表。"""
+        install_dirs = self._collect_install_dirs(to_enable, extensions)
+        results = []
+        for pkg_dir in install_dirs:
+            disp = self._display_path(pkg_dir)
+            proc = subprocess.run(
+                ["npm", "install"], cwd=pkg_dir,
+                capture_output=True, text=True,
+                timeout=self.NPM_INSTALL_TIMEOUT,
+            )
+            results.append({"name": disp, "status": Status.SUCCESS,
+                            "detail": "npm install"})
+        return results
+
+    def _collect_install_dirs(self, to_enable, extensions):
+        """收集需执行 npm install 的唯一 package 目录（按发现顺序去重）。"""
+        seen = []
+        seen_set = set()
+        for name in to_enable:
+            ext = extensions.get(name)
+            if ext is None or ext.type != "plugin":
+                continue
+            for dep in ext.path_deps:
+                pkg_dir = self._resolve_pkg_dir(dep.source)
+                if pkg_dir is None or pkg_dir in seen_set:
+                    continue
+                seen_set.add(pkg_dir)
+                seen.append(pkg_dir)
+        return seen
+
+    def _resolve_pkg_dir(self, source):
+        """source 为目录取自身，为文件取 dirname；无 package.json 返回 None。"""
+        abs_source = os.path.normpath(os.path.join(self._source_dir, source))
+        pkg_dir = abs_source if os.path.isdir(abs_source) else os.path.dirname(abs_source)
+        if os.path.isfile(os.path.join(pkg_dir, "package.json")):
+            return pkg_dir
+        return None
+
+    def _display_path(self, pkg_dir):
+        """在 source_dir 下显示相对路径，否则绝对路径。"""
+        try:
+            rel = os.path.relpath(pkg_dir, self._source_dir)
+            if not rel.startswith(".."):
+                return rel
+        except ValueError:
+            pass
+        return pkg_dir
+
+
 class Validator:
     def __init__(self, source_dir: str, target_dir: str):
         self._source_dir = os.path.abspath(source_dir)

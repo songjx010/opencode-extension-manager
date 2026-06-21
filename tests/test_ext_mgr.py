@@ -1,7 +1,8 @@
 import json
 import os
+import subprocess
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch, call
 from ext_mgr import (
     parse_depends,
     ConfigManager,
@@ -9,6 +10,7 @@ from ext_mgr import (
     ExtensionStore,
     ChangeSet,
     SymlinkManager,
+    NpmDependencyManager,
     Validator,
     DialogUI,
     Extension,
@@ -1623,3 +1625,57 @@ def test_store_resolve_syncs_state():
     s.resolve_changes(["b"])
     assert s.get("a").enabled is False
     assert s.get("b").enabled is True
+
+
+# ---------- NpmDependencyManager ----------
+
+def test_npm_install_dir_source_success(tmp_path):
+    pkg_dir = tmp_path / "myplugin"
+    pkg_dir.mkdir()
+    (pkg_dir / "package.json").write_text('{"name":"myplugin"}')
+    exts = make_extensions({
+        "myplugin": {"type": "plugin", "enabled": False,
+                     "path_deps": [(str(pkg_dir), "plugins/myplugin")]},
+    })
+    mgr = NpmDependencyManager(str(tmp_path))
+    fake_proc = MagicMock(returncode=0, stderr="", stdout="")
+    with patch("ext_mgr.subprocess.run", return_value=fake_proc) as mock_run, \
+         patch("ext_mgr.shutil.which", return_value="/usr/bin/npm"):
+        results = mgr.install_for(["myplugin"], exts)
+    assert len(results) == 1
+    assert results[0]["status"] == Status.SUCCESS
+    assert results[0]["name"] == "myplugin"
+    assert mock_run.call_count == 1
+    assert mock_run.call_args.kwargs["cwd"] == str(pkg_dir)
+
+
+def test_npm_install_file_source_uses_dirname(tmp_path):
+    pkg_dir = tmp_path / "pkg"
+    pkg_dir.mkdir()
+    (pkg_dir / "package.json").write_text("{}")
+    (pkg_dir / "index.js").write_text("// plugin")
+    exts = make_extensions({
+        "p": {"type": "plugin", "enabled": False,
+              "path_deps": [(str(pkg_dir / "index.js"), "plugins/p.js")]},
+    })
+    mgr = NpmDependencyManager(str(tmp_path))
+    fake = MagicMock(returncode=0, stderr="", stdout="")
+    with patch("ext_mgr.subprocess.run", return_value=fake) as mock_run, \
+         patch("ext_mgr.shutil.which", return_value="/usr/bin/npm"):
+        mgr.install_for(["p"], exts)
+    assert mock_run.call_args.kwargs["cwd"] == str(pkg_dir)
+
+
+def test_npm_install_no_package_json_skipped(tmp_path):
+    pkg_dir = tmp_path / "nopkg"
+    pkg_dir.mkdir()
+    exts = make_extensions({
+        "p": {"type": "plugin", "enabled": False,
+              "path_deps": [(str(pkg_dir), "plugins/p")]},
+    })
+    mgr = NpmDependencyManager(str(tmp_path))
+    with patch("ext_mgr.subprocess.run") as mock_run, \
+         patch("ext_mgr.shutil.which", return_value="/usr/bin/npm"):
+        results = mgr.install_for(["p"], exts)
+    assert results == []
+    assert mock_run.call_count == 0
