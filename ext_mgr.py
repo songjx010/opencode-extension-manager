@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict
 
 GROUP_TO_TYPE = {
     "skills": "skill",
@@ -199,27 +199,62 @@ class ConfigManager:
                 dfs(name, [])
 
 
+class DependencyGraph:
+    """Pre-computed forward and reverse dependency adjacency maps.
+
+    Eliminates repeated O(N) full-table scans for dependent lookups.
+    The dependency *structure* is immutable for the session's lifetime;
+    only the mutable ``enabled`` state lives in the extensions dict.
+    """
+
+    def __init__(self, extensions: dict):
+        self._forward: Dict[str, set] = {}
+        self._reverse: Dict[str, set] = {}
+        for name in extensions:
+            self._forward.setdefault(name, set())
+            self._reverse.setdefault(name, set())
+        for name, ext in extensions.items():
+            ext_deps, _ = parse_depends(ext.get("depends", []))
+            for dep in ext_deps:
+                self._forward[name].add(dep)
+                self._reverse.setdefault(dep, set()).add(name)
+
+    def deps_of(self, name: str) -> set:
+        """Extensions that *name* depends on."""
+        return self._forward.get(name, set())
+
+    def dependents_of(self, name: str) -> set:
+        """Extensions that depend on *name*."""
+        return self._reverse.get(name, set())
+
+    def has_enabled_dependent(self, name: str, extensions: dict) -> bool:
+        """True if any currently-enabled extension depends on *name*."""
+        return any(
+            extensions.get(d, {}).get("enabled", False)
+            for d in self._reverse.get(name, set())
+        )
+
+
 class DependencyResolver:
     def resolve(self, selected: list, extensions: dict) -> dict:
-        to_enable = set(selected)
+        graph = DependencyGraph(extensions)
 
+        to_enable = set(selected)
         for name in selected:
-            self._collect_deps(name, extensions, to_enable)
+            self._collect_deps(graph, name, extensions, to_enable)
 
         to_disable = set(extensions.keys()) - to_enable
 
         rejected = []
         for name in list(to_disable):
-            dependents = self._find_dependents(name, extensions, to_enable)
+            dependents = sorted(d for d in graph.dependents_of(name) if d in to_enable)
             if dependents:
                 rejected.append(
                     {"name": name, "reason": "被依赖", "dependents": dependents}
                 )
                 to_disable.discard(name)
 
-        cascade_disabled = self._cascade_disable(
-            to_enable, to_disable, extensions
-        )
+        cascade_disabled = self._cascade_disable(graph, to_disable)
 
         return {
             "to_enable": sorted(to_enable),
@@ -228,49 +263,21 @@ class DependencyResolver:
             "rejected": rejected,
         }
 
-    def _collect_deps(self, name: str, extensions: dict, collected: set) -> None:
-        if name not in extensions:
-            return
-        ext_deps, _ = parse_depends(extensions[name].get("depends", []))
-        for dep in ext_deps:
-            if dep not in collected and dep in extensions:
+    @staticmethod
+    def _collect_deps(graph: DependencyGraph, name: str, extensions: dict, collected: set) -> None:
+        for dep in graph.deps_of(name):
+            if dep in extensions and dep not in collected:
                 collected.add(dep)
-                self._collect_deps(dep, extensions, collected)
+                DependencyResolver._collect_deps(graph, dep, extensions, collected)
 
-    def _find_dependents(
-        self, name: str, extensions: dict, selected: set
-    ) -> list:
-        dependents = []
-        for ext_name, ext_data in extensions.items():
-            if ext_name in selected:
-                ext_deps, _ = parse_depends(ext_data.get("depends", []))
-                if name in ext_deps:
-                    dependents.append(ext_name)
-        return sorted(dependents)
-
-    def _find_dependents_excluding(
-        self, name: str, extensions: dict, candidates: set, excluded: set
-    ) -> list:
-        dependents = []
-        for ext_name, ext_data in extensions.items():
-            if ext_name in excluded:
-                continue
-            if ext_name not in candidates:
-                continue
-            ext_deps, _ = parse_depends(ext_data.get("depends", []))
-            if name in ext_deps:
-                dependents.append(ext_name)
-        return sorted(dependents)
-
-    def _cascade_disable(
-        self, to_enable: set, to_disable: set, extensions: dict
-    ) -> set:
+    @staticmethod
+    def _cascade_disable(graph: DependencyGraph, to_disable: set) -> set:
         cascade_disabled = set()
         changed = True
         while changed:
             changed = False
             for name in list(to_disable):
-                dependents = self._find_all_dependents_of(name, extensions)
+                dependents = graph.dependents_of(name)
                 if not dependents:
                     continue
                 all_disabled = to_disable | cascade_disabled
@@ -279,14 +286,6 @@ class DependencyResolver:
                     cascade_disabled.add(name)
                     changed = True
         return cascade_disabled
-
-    def _find_all_dependents_of(self, name: str, extensions: dict) -> list:
-        dependents = []
-        for ext_name, ext_data in extensions.items():
-            ext_deps, _ = parse_depends(ext_data.get("depends", []))
-            if name in ext_deps:
-                dependents.append(ext_name)
-        return dependents
 
 
 class SymlinkManager:
@@ -560,20 +559,6 @@ class DialogAdapter:
         except FileNotFoundError:
             return -1
 
-    @staticmethod
-    def run_textbox(title: str, text: str) -> int:
-        term_h, term_w = DialogAdapter._term_size()
-        h = max(term_h - 4, 20)
-        w = max(term_w - 10, 70)
-        args = ["dialog", "--stdout", "--textbox", text, str(h), str(w)]
-        try:
-            result = subprocess.run(
-                args, capture_output=True, text=True, env=os.environ.copy()
-            )
-            return result.returncode
-        except FileNotFoundError:
-            return -1
-
 
 class DialogUI:
     TYPES_LABELS = {
@@ -592,13 +577,17 @@ class DialogUI:
 
     @staticmethod
     def _visible_len(s: str) -> int:
-        return len(re.sub(r'\\Z[b0-7rR]', '', s))
+        return len(re.sub(r'\\Z[b0-7nrR]', '', s))
 
     def _pad_label(self, label: str, width: int) -> str:
         pad = width - self._visible_len(label)
         return label + " " * max(pad, 1)
 
     def _cascade_disable_deps(self, disabled: set, extensions: dict) -> None:
+        graph = DependencyGraph(extensions)
+        for name in disabled:
+            if name in extensions:
+                extensions[name]["enabled"] = False
         queue = list(disabled)
         visited = set()
         while queue:
@@ -606,22 +595,12 @@ class DialogUI:
             if name in visited:
                 continue
             visited.add(name)
-            ext_deps, _ = parse_depends(
-                extensions.get(name, {}).get("depends", [])
-            )
-            for dep in ext_deps:
-                if dep in extensions and extensions[dep].get("enabled", False):
-                    still_needed = False
-                    for ext_name, ext_data in extensions.items():
-                        if ext_name == name or not ext_data.get("enabled", False):
-                            continue
-                        dep_list, _ = parse_depends(ext_data.get("depends", []))
-                        if dep in dep_list:
-                            still_needed = True
-                            break
-                    if not still_needed:
-                        extensions[dep]["enabled"] = False
-                        queue.append(dep)
+            for dep in graph.deps_of(name):
+                if dep not in extensions or not extensions[dep].get("enabled", False):
+                    continue
+                if not graph.has_enabled_dependent(dep, extensions):
+                    extensions[dep]["enabled"] = False
+                    queue.append(dep)
 
     def _check_availability(self, name: str, extensions: dict) -> list:
         missing = []
@@ -674,28 +653,30 @@ class DialogUI:
         return total, enabled, ok
 
     def show_target_dir_input(self) -> str:
-        code, value = self._adapter.run_inputbox("目标目录", self._target_dir)
-        if code != 0:
-            return "cancel"
-        if not value.strip():
+        while True:
+            code, value = self._adapter.run_inputbox("目标目录", self._target_dir)
+            if code != 0:
+                return "cancel"
+            if value.strip():
+                self._target_dir = value.strip()
+                return self._target_dir
             self._adapter.run_msgbox("错误", "目标目录不能为空")
-            return self.show_target_dir_input()
-        self._target_dir = value.strip()
-        return self._target_dir
 
     def show_extension_list(self, extensions: dict) -> tuple:
         while True:
             menu_items = []
             max_label_w = 0
+            stats_per_type = {}
             for t in self.TYPES_ORDER:
-                total, _, _ = self._count_stats(extensions, t)
+                total, enabled, ok = self._count_stats(extensions, t)
+                stats_per_type[t] = (total, enabled, ok)
                 if total > 0:
                     max_label_w = max(
                         max_label_w,
                         self._visible_len(self.TYPES_LABELS.get(t, t)),
                     )
             for t in self.TYPES_ORDER:
-                total, enabled, ok = self._count_stats(extensions, t)
+                total, enabled, ok = stats_per_type[t]
                 if total == 0:
                     continue
                 label = self._pad_label(
@@ -823,12 +804,6 @@ class DialogUI:
                 lines.append(f"{name}\t{color}{r['status']}\\Zn")
         self._adapter.run_msgbox("操作结果", "\n".join(lines))
 
-    def show_validation_results(self, results: list) -> None:
-        lines = []
-        for r in results:
-            lines.append(f"{r['name']}: {r['status']} - {r['detail']}")
-        self._adapter.run_msgbox("校验结果", "\n".join(lines))
-
     def show_error(self, message: str) -> None:
         self._adapter.run_msgbox("错误", message)
 
@@ -860,7 +835,6 @@ def main():
 
     resolver = DependencyResolver()
     symlink_mgr = SymlinkManager(script_dir, target)
-    validator = Validator(script_dir, target)
 
     while True:
         action, selected = ui.show_extension_list(extensions)
