@@ -2,7 +2,7 @@ import json
 import os
 import subprocess
 import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 from ext_mgr import (
     parse_depends,
     ConfigManager,
@@ -1824,3 +1824,16 @@ def test_run_infobox_builds_dialog_args(tmp_path):
     cmd = mock_run.call_args.args[0]
     assert "--infobox" in cmd
     assert "正在安装插件依赖，请稍候..." in cmd
+
+
+def test_npm_install_plugin_with_only_ext_deps_is_noop(tmp_path):
+    exts = make_extensions({
+        "p": {"type": "plugin", "enabled": False,
+              "ext_deps": ["other"], "path_deps": []},
+    })
+    mgr = NpmDependencyManager(str(tmp_path))
+    with patch("ext_mgr.subprocess.run") as mock_run, \
+         patch("ext_mgr.shutil.which", return_value="/usr/bin/npm"):
+        results = mgr.install_for(["p"], exts)
+    assert results == []
+    assert mock_run.call_count == 0
