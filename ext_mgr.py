@@ -533,16 +533,31 @@ class NpmDependencyManager:
         """对 to_enable 中的 plugin 扩展，定位 source 目录下的 package.json，
         在该目录执行 npm install。返回 [{name, status, detail}] 结果列表。"""
         install_dirs = self._collect_install_dirs(to_enable, extensions)
+        if not install_dirs:
+            return []
+        npm_available = shutil.which("npm") is not None
         results = []
         for pkg_dir in install_dirs:
             disp = self._display_path(pkg_dir)
-            proc = subprocess.run(
-                ["npm", "install"], cwd=pkg_dir,
-                capture_output=True, text=True,
-                timeout=self.NPM_INSTALL_TIMEOUT,
-            )
-            results.append({"name": disp, "status": Status.SUCCESS,
-                            "detail": "npm install"})
+            if not npm_available:
+                results.append({"name": disp, "status": Status.ERROR,
+                                "detail": "npm 未安装，跳过依赖安装"})
+                continue
+            try:
+                proc = subprocess.run(
+                    ["npm", "install"], cwd=pkg_dir,
+                    capture_output=True, text=True,
+                    timeout=self.NPM_INSTALL_TIMEOUT,
+                )
+                if proc.returncode == 0:
+                    results.append({"name": disp, "status": Status.SUCCESS,
+                                    "detail": "npm install"})
+                else:
+                    results.append({"name": disp, "status": Status.ERROR,
+                                    "detail": (proc.stderr or "")[-500:]})
+            except subprocess.TimeoutExpired:
+                results.append({"name": disp, "status": Status.ERROR,
+                                "detail": "npm install 超时"})
         return results
 
     def _collect_install_dirs(self, to_enable, extensions):
