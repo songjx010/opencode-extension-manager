@@ -263,6 +263,163 @@ class ConfigManager:
                 dfs(name, [])
 
 
+class ExtensionStore:
+    """扩展状态的唯一拥有者：持有 extensions dict 与会话内邻接表。
+
+    封装所有领域操作（toggle / 级联 / 解析 / 可用性检查）。UI 与 I/O 层
+    通过本类访问领域状态，不直接操作 extensions dict 或邻接结构。
+    """
+
+    def __init__(self, extensions, source_dir=""):
+        self._extensions = extensions
+        self._source_dir = source_dir
+        self._forward = {}
+        self._reverse = {}
+        for name in extensions:
+            self._forward.setdefault(name, set())
+            self._reverse.setdefault(name, set())
+        for name, ext in extensions.items():
+            for dep in ext.ext_deps:
+                self._forward[name].add(dep)
+                self._reverse.setdefault(dep, set()).add(name)
+
+    @property
+    def extensions(self):
+        return self._extensions
+
+    def get(self, name):
+        return self._extensions.get(name)
+
+    def names(self):
+        return list(self._extensions.keys())
+
+    def by_type(self, ext_type):
+        return [e for e in self._extensions.values() if e.type == ext_type]
+
+    def set_enabled(self, name, enabled):
+        if name in self._extensions:
+            self._extensions[name].enabled = enabled
+
+    def deps_of(self, name):
+        return set(self._forward.get(name, set()))
+
+    def dependents_of(self, name):
+        return set(self._reverse.get(name, set()))
+
+    def has_enabled_dependent(self, name):
+        return any(
+            self._extensions[d].enabled
+            for d in self._reverse.get(name, set())
+            if d in self._extensions
+        )
+
+    def check_availability(self, name):
+        """返回缺失依赖列表（扩展依赖名 + 路径依赖 source）。"""
+        missing = []
+        ext = self._extensions.get(name)
+        if ext is None:
+            return missing
+        for dep in ext.ext_deps:
+            if dep not in self._extensions:
+                missing.append(dep)
+        for dep in ext.path_deps:
+            source_path = os.path.join(self._source_dir, dep.source)
+            if not os.path.exists(source_path):
+                missing.append(dep.source)
+        return missing
+
+    def cascade_disable(self, seed):
+        """前向级联：seed 刚被关掉 → BFS 其 forward deps，若某 dep 已无任何
+        enabled dependent，则禁用它并入队继续。返回 seed+新级联 的完整集合。
+        会改写 enabled 标志。"""
+        disabled = set(seed)
+        for name in seed:
+            if name in self._extensions:
+                self._extensions[name].enabled = False
+        queue = list(seed)
+        visited = set()
+        while queue:
+            cur = queue.pop(0)
+            if cur in visited:
+                continue
+            visited.add(cur)
+            for dep in self._forward.get(cur, set()):
+                ext = self._extensions.get(dep)
+                if ext is None or not ext.enabled:
+                    continue
+                if not self.has_enabled_dependent(dep):
+                    ext.enabled = False
+                    disabled.add(dep)
+                    queue.append(dep)
+        return disabled
+
+    def resolve_changes(self, selected):
+        """计算给定选择下的变更集，并同步 store 的 enabled 状态。
+
+        - to_enable = selected ∪ 其 forward 依赖闭包
+        - to_disable_all = 全部 − to_enable
+        - rejected = to_disable_all 中仍被 to_enable 依赖者（不可禁）
+        - actual_disable = to_disable_all − rejected
+        - cascade_disabled = actual_disable 中 dependent 全部也在 actual_disable 者
+        """
+        selected_set = set(selected)
+        to_enable = set(selected_set)
+        for name in selected_set:
+            self._collect_forward(name, to_enable)
+
+        to_disable_all = set(self._extensions.keys()) - to_enable
+
+        rejected = []
+        for name in sorted(to_disable_all):
+            enabled_dependents = sorted(
+                d for d in self._reverse.get(name, set()) if d in to_enable
+            )
+            if enabled_dependents:
+                rejected.append({
+                    "name": name,
+                    "reason": "被依赖",
+                    "dependents": enabled_dependents,
+                })
+        actual_disable = to_disable_all - {r["name"] for r in rejected}
+
+        cascade_disabled = self._classify_for_display(actual_disable)
+        explicit_disable = actual_disable - cascade_disabled
+
+        for n in to_enable:
+            if n in self._extensions:
+                self._extensions[n].enabled = True
+        for n in actual_disable:
+            if n in self._extensions:
+                self._extensions[n].enabled = False
+
+        return ChangeSet(
+            to_enable=sorted(to_enable),
+            to_disable=sorted(explicit_disable),
+            cascade_disabled=sorted(cascade_disabled),
+            rejected=rejected,
+        )
+
+    def _collect_forward(self, name, collected):
+        for dep in self._forward.get(name, set()):
+            if dep in self._extensions and dep not in collected:
+                collected.add(dep)
+                self._collect_forward(dep, collected)
+
+    def _classify_for_display(self, actual_disable):
+        """actual_disable 中，所有 dependent 也都属于 actual_disable 的 name
+        归入 cascade_disabled。纯查询，不改状态。"""
+        cascade = set()
+        changed = True
+        while changed:
+            changed = False
+            for name in actual_disable - cascade:
+                deps = self._reverse.get(name, set())
+                if deps and all(d in actual_disable for d in deps):
+                    cascade.add(name)
+                    changed = True
+        return cascade
+
+
 class DependencyGraph:
     """Pre-computed forward and reverse dependency adjacency maps.
 

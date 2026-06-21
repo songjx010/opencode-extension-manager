@@ -1421,3 +1421,170 @@ def test_make_extensions_defaults():
     exts = make_extensions({"x": {"type": "command", "enabled": True}})
     assert exts["x"].description == ""
     assert exts["x"].visible is True
+
+
+from ext_mgr import ExtensionStore
+
+
+def _store_a():
+    """a→b→c 链 + standalone，全部 enabled=False。"""
+    return ExtensionStore(make_extensions({
+        "a": {"type": "skill", "enabled": False, "description": "A",
+              "ext_deps": ["b"], "path_deps": [("a.md", "a.md")]},
+        "b": {"type": "agent", "enabled": False, "description": "B",
+              "ext_deps": ["c"], "path_deps": [("b.md", "b.md")]},
+        "c": {"type": "agent", "enabled": False, "description": "C",
+              "path_deps": [("c.md", "c.md")]},
+        "standalone": {"type": "skill", "enabled": False, "description": "S",
+                       "path_deps": [("s.md", "s.md")]},
+    }))
+
+
+def test_store_get_and_names():
+    s = _store_a()
+    assert s.get("a").name == "a"
+    assert s.get("missing") is None
+    assert set(s.names()) == {"a", "b", "c", "standalone"}
+
+
+def test_store_by_type():
+    s = _store_a()
+    skills = s.by_type("skill")
+    assert {e.name for e in skills} == {"a", "standalone"}
+
+
+def test_store_adjacency():
+    s = _store_a()
+    assert s.deps_of("a") == {"b"}
+    assert s.deps_of("b") == {"c"}
+    assert s.dependents_of("b") == {"a"}
+    assert s.dependents_of("c") == {"b"}
+    assert s.dependents_of("standalone") == set()
+
+
+def test_store_check_availability_all_present(tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.md").write_text("x")
+    s = ExtensionStore(make_extensions({
+        "a": {"type": "skill", "enabled": True, "description": "A",
+              "ext_deps": ["b"], "path_deps": [("a.md", "a.md")]},
+        "b": {"type": "agent", "enabled": True, "description": "B"},
+    }), source_dir=str(src))
+    assert s.check_availability("a") == []
+
+
+def test_store_check_availability_ext_dep_missing():
+    s = ExtensionStore(make_extensions({
+        "a": {"type": "skill", "enabled": True, "description": "A",
+              "ext_deps": ["ghost"]},
+    }))
+    assert s.check_availability("a") == ["ghost"]
+
+
+def test_store_check_availability_path_source_missing(tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    s = ExtensionStore(make_extensions({
+        "a": {"type": "skill", "enabled": True, "description": "A",
+              "path_deps": [("missing.md", "missing.md")]},
+    }), source_dir=str(src))
+    assert s.check_availability("a") == ["missing.md"]
+
+
+def test_store_cascade_simple():
+    # a→b，禁 a 后 b 无其他依赖者，应级联禁用 b
+    s = ExtensionStore(make_extensions({
+        "a": {"type": "skill", "enabled": True, "description": "A", "ext_deps": ["b"]},
+        "b": {"type": "agent", "enabled": True, "description": "B"},
+    }))
+    disabled = s.cascade_disable({"a"})
+    assert disabled == {"a", "b"}
+    assert s.get("a").enabled is False
+    assert s.get("b").enabled is False
+
+
+def test_store_cascade_keeps_if_other_dependent():
+    # a→b, c→b；禁 a 时 b 仍被 c 依赖，不应级联
+    s = ExtensionStore(make_extensions({
+        "a": {"type": "skill", "enabled": True, "description": "A", "ext_deps": ["b"]},
+        "c": {"type": "skill", "enabled": True, "description": "C", "ext_deps": ["b"]},
+        "b": {"type": "agent", "enabled": True, "description": "B"},
+    }))
+    disabled = s.cascade_disable({"a"})
+    assert disabled == {"a"}
+    assert s.get("b").enabled is True
+
+
+def test_store_cascade_transitive():
+    # a→b→c，禁 a 应级联禁 b、c
+    s = ExtensionStore(make_extensions({
+        "a": {"type": "skill", "enabled": True, "description": "A", "ext_deps": ["b"]},
+        "b": {"type": "agent", "enabled": True, "description": "B", "ext_deps": ["c"]},
+        "c": {"type": "agent", "enabled": True, "description": "C"},
+    }))
+    disabled = s.cascade_disable({"a"})
+    assert disabled == {"a", "b", "c"}
+
+
+def test_store_resolve_single_ext():
+    s = ExtensionStore(make_extensions({
+        "a": {"type": "skill", "enabled": False, "description": "A",
+              "ext_deps": ["b"], "path_deps": [("a.md", "a.md")]},
+        "b": {"type": "agent", "enabled": False, "description": "B",
+              "ext_deps": ["c"], "path_deps": [("b.md", "b.md")]},
+        "c": {"type": "agent", "enabled": False, "description": "C",
+              "path_deps": [("c.md", "c.md")]},
+        "standalone": {"type": "skill", "enabled": False, "description": "S",
+                       "path_deps": [("s.md", "s.md")]},
+    }))
+    cs = s.resolve_changes(["standalone"])
+    assert cs.to_enable == ["standalone"]
+    assert "standalone" not in cs.to_disable
+
+
+def test_store_resolve_transitive():
+    s = ExtensionStore(make_extensions({
+        "a": {"type": "skill", "enabled": False, "description": "A", "ext_deps": ["b"]},
+        "b": {"type": "agent", "enabled": False, "description": "B", "ext_deps": ["c"]},
+        "c": {"type": "agent", "enabled": False, "description": "C"},
+    }))
+    cs = s.resolve_changes(["a"])
+    assert cs.to_enable == ["a", "b", "c"]
+
+
+def test_store_resolve_cascade_classification():
+    # 全启用 → 选 []：a 显式禁，b/c 因 dependent 全禁而归入 cascade
+    s = ExtensionStore(make_extensions({
+        "a": {"type": "skill", "enabled": True, "description": "A", "ext_deps": ["b"]},
+        "b": {"type": "agent", "enabled": True, "description": "B", "ext_deps": ["c"]},
+        "c": {"type": "agent", "enabled": True, "description": "C"},
+    }))
+    cs = s.resolve_changes([])
+    assert cs.to_disable == ["a"]
+    assert cs.cascade_disabled == ["b", "c"]
+    assert cs.rejected == []
+
+
+def test_store_resolve_reject_if_depended():
+    # b/c 仍被 a 需要（a 在 to_enable）→ 不进入 to_disable
+    s = ExtensionStore(make_extensions({
+        "a": {"type": "skill", "enabled": False, "description": "A",
+              "ext_deps": ["b", "c"]},
+        "b": {"type": "agent", "enabled": False, "description": "B"},
+        "c": {"type": "agent", "enabled": False, "description": "C"},
+    }))
+    cs = s.resolve_changes(["a"])
+    assert cs.to_enable == ["a", "b", "c"]
+    assert cs.to_disable == []
+    assert cs.rejected == []
+
+
+def test_store_resolve_syncs_state():
+    s = ExtensionStore(make_extensions({
+        "a": {"type": "skill", "enabled": True, "description": "A"},
+        "b": {"type": "skill", "enabled": False, "description": "B"},
+    }))
+    s.resolve_changes(["b"])
+    assert s.get("a").enabled is False
+    assert s.get("b").enabled is True
