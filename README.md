@@ -10,6 +10,7 @@
 - **原子配置回写**：配置变更通过临时文件 + `os.replace` 原子写入，保证数据安全
 - **可用性检查**：实时检测缺失依赖，缺失的扩展在界面中标记并禁止勾选
 - **隐藏扩展**：`visible: false` 的扩展不进入勾选列表，但仍参与依赖管理
+- **插件依赖安装**：使能 plugin 类型扩展时，自动在其 source 目录的 `package.json` 所在处执行 `npm install`
 
 ## 前置条件
 
@@ -277,6 +278,15 @@ python3 ext_mgr.py
 
 仅删除该扩展自身 `depends` 中路径依赖对应的符号链接。级联禁用的扩展同样会删除其路径依赖的符号链接。若链接指向非预期目标则报告 `conflict`，不会误删。
 
+### 插件依赖安装
+
+使能 `plugin` 类型的扩展后，系统会检查其 `depends` 中每个路径依赖项的 `source` 所在目录（`source` 为目录取自身，为文件取其所在目录）。若该目录含 `package.json`，则在其中执行 `npm install` 安装依赖。
+
+- 同一目录只安装一次（多个 `source` 指向同一目录时自动去重）
+- 仅 `plugin` 类型触发；其他类型即使存在 `package.json` 也不执行
+- 安装失败（非零退出、超时、npm 未安装）非阻断：符号链接照常创建、`enabled` 照常写入，仅在结果界面以 `ERROR` 呈现
+- 禁用插件时**不删除**已安装的 `node_modules`，保留依赖
+
 ## 架构
 
 `ext_mgr.py` 采用单文件分层架构，各组件职责清晰、单向依赖（UI / I/O 层 → 领域层 → 数据模型）：
@@ -303,6 +313,7 @@ python3 ext_mgr.py
 |------|------|
 | `ConfigManager` | 加载 / 校验 / 保存 `extensions.json`，处理原子写入与 `extra` 未知字段保留 |
 | `SymlinkManager` | 创建 / 删除符号链接，返回带状态的结果列表 |
+| `NpmDependencyManager` | 使能 plugin 扩展时在其 source 目录的 package.json 所在处执行 `npm install` |
 | `Validator` | 编程式符号链接状态校验（独立工具，未接入 `main()` 运行时主循环） |
 
 ### TUI 层
