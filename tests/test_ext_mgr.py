@@ -1318,3 +1318,58 @@ def test_show_type_checklist_cascades_disable_across_types():
     ui._show_type_checklist(exts, "skill")
     assert exts["parent"]["enabled"] is False
     assert exts["child-agent"]["enabled"] is False
+
+
+from ext_mgr import Extension, PathDep, Config, ChangeSet, Status, Format, DEFAULT_TARGET_DIR
+
+
+def test_pathdep_fields():
+    d = PathDep(source="a.md", target="b.md")
+    assert d.source == "a.md"
+    assert d.target == "b.md"
+
+
+def test_extension_defaults():
+    e = Extension(name="x", type="skill", enabled=True, description="d")
+    assert e.ext_deps == []
+    assert e.path_deps == []
+    assert e.visible is True
+
+
+def test_extension_with_deps():
+    e = Extension(
+        name="x", type="skill", enabled=True, description="d",
+        ext_deps=["y"], path_deps=[PathDep("s", "t")], visible=False,
+    )
+    assert e.ext_deps == ["y"]
+    assert e.path_deps == [PathDep("s", "t")]
+    assert e.visible is False
+
+
+def test_config_defaults():
+    c = Config(version=3, extensions={})
+    assert c.warnings == []
+    assert c.extra == {}
+
+
+def test_changeset_is_frozen():
+    cs = ChangeSet(to_enable=["a"], to_disable=[], cascade_disabled=[], rejected=[])
+    assert cs.to_enable == ["a"]
+    import pytest
+    with pytest.raises(Exception):
+        cs.to_enable = ["b"]   # frozen dataclass 不可赋值
+
+
+def test_status_constants():
+    assert Status.SUCCESS == "success"
+    assert Status.MISSING == "missing"
+    assert Status.OK == "ok"
+
+
+def test_format_constants():
+    assert Format.BOLD == "\\Zb"
+    assert Format.RESET == "\\Zn"
+
+
+def test_default_target_dir():
+    assert DEFAULT_TARGET_DIR == "~/.config/opencode"

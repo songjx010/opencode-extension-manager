@@ -8,7 +8,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from typing import Dict
+from dataclasses import dataclass, field
+from typing import Dict, List
 
 GROUP_TO_TYPE = {
     "skills": "skill",
@@ -17,6 +18,32 @@ GROUP_TO_TYPE = {
     "plugins": "plugin",
 }
 TYPE_TO_GROUP = {v: k for k, v in GROUP_TO_TYPE.items()}
+
+
+class Status:
+    SUCCESS = "success"
+    SKIPPED = "skipped"
+    CONFLICT = "conflict"
+    ERROR = "error"
+    MISSING = "missing"
+    BROKEN = "broken"
+    UNEXPECTED = "unexpected"
+    OK = "ok"
+
+
+class Format:
+    BOLD = "\\Zb"
+    RED = "\\Z1"
+    GREEN = "\\Z2"
+    YELLOW = "\\Z3"
+    BLUE = "\\Z4"
+    MAGENTA = "\\Z5"
+    RESET = "\\Zn"
+    OK_MARK = "\\Zb\\Z2 OK \\Zn"
+    WARN_MARK = "\\Zr !! \\ZR"
+
+
+DEFAULT_TARGET_DIR = "~/.config/opencode"
 
 
 def parse_depends(depends_list):
@@ -28,6 +55,43 @@ def parse_depends(depends_list):
         elif isinstance(item, dict):
             path_deps.append(item)
     return ext_deps, path_deps
+
+
+@dataclass
+class PathDep:
+    """路径依赖（source→target 符号链接映射）。"""
+    source: str
+    target: str
+
+
+@dataclass
+class Extension:
+    """单个扩展的领域模型。"""
+    name: str
+    type: str
+    enabled: bool
+    description: str
+    ext_deps: List[str] = field(default_factory=list)
+    path_deps: List[PathDep] = field(default_factory=list)
+    visible: bool = True
+
+
+@dataclass
+class Config:
+    """整体配置。extensions 为扁平 dict[name -> Extension]。"""
+    version: int
+    extensions: Dict[str, Extension]
+    warnings: List[str] = field(default_factory=list)
+    extra: Dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ChangeSet:
+    """resolve_changes 的不可变返回值。"""
+    to_enable: List[str]
+    to_disable: List[str]
+    cascade_disabled: List[str]
+    rejected: List[Dict]
 
 
 class ConfigError(Exception):
