@@ -1323,6 +1323,32 @@ def test_show_type_checklist_cascades_disable_across_types():
 from ext_mgr import Extension, PathDep, Config, ChangeSet, Status, Format, DEFAULT_TARGET_DIR
 
 
+def make_extensions(spec):
+    """从紧凑 spec 构造 dict[name -> Extension]。
+
+    spec[name] = {
+        "type": str,              # 必填
+        "enabled": bool,          # 必填
+        "description": str,       # 可选，默认 ""
+        "ext_deps": [str, ...],   # 可选，默认 []
+        "path_deps": [(source, target), ...],  # 可选，默认 []
+        "visible": bool,          # 可选，默认 True
+    }
+    """
+    extensions = {}
+    for name, attrs in spec.items():
+        extensions[name] = Extension(
+            name=name,
+            type=attrs["type"],
+            enabled=attrs["enabled"],
+            description=attrs.get("description", ""),
+            ext_deps=list(attrs.get("ext_deps", [])),
+            path_deps=[PathDep(s, t) for s, t in attrs.get("path_deps", [])],
+            visible=attrs.get("visible", True),
+        )
+    return extensions
+
+
 def test_pathdep_fields():
     d = PathDep(source="a.md", target="b.md")
     assert d.source == "a.md"
@@ -1373,3 +1399,25 @@ def test_format_constants():
 
 def test_default_target_dir():
     assert DEFAULT_TARGET_DIR == "~/.config/opencode"
+
+
+def test_make_extensions_basic():
+    exts = make_extensions({
+        "a": {"type": "skill", "enabled": True, "description": "A",
+              "ext_deps": ["b"], "path_deps": [("a.md", "a.md")]},
+        "b": {"type": "agent", "enabled": False, "description": "B", "visible": False},
+    })
+    assert isinstance(exts["a"], Extension)
+    assert exts["a"].ext_deps == ["b"]
+    assert exts["a"].path_deps == [PathDep("a.md", "a.md")]
+    assert exts["a"].visible is True
+    assert exts["b"].type == "agent"
+    assert exts["b"].visible is False
+    assert exts["b"].ext_deps == []
+    assert exts["b"].path_deps == []
+
+
+def test_make_extensions_defaults():
+    exts = make_extensions({"x": {"type": "command", "enabled": True}})
+    assert exts["x"].description == ""
+    assert exts["x"].visible is True
