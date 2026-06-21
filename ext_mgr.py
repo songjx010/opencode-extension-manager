@@ -741,10 +741,10 @@ class DialogUI:
                 if total == 0:
                     continue
                 label = self._pad_label(self.TYPES_LABELS.get(t, t), max_label_w)
-                stats = (f"\t\\Zb\\Z1{enabled}/{total} 启用\\Zn"
-                         f"\t\\Zb\\Z5{ok}/{total} 可用\\Zn")
+                stats = (f"\t{Format.BOLD}{Format.RED}{enabled}/{total} 启用{Format.RESET}"
+                         f"\t{Format.BOLD}{Format.MAGENTA}{ok}/{total} 可用{Format.RESET}")
                 menu_items.append((t, label + stats))
-            menu_items.append(("apply", "\\Zb\\Z2确认并应用变更\\Zn"))
+            menu_items.append(("apply", f"{Format.BOLD}{Format.GREEN}确认并应用变更{Format.RESET}"))
             menu_items.append(("quit", "退出"))
 
             code, choice = self._adapter.run_menu("扩展管理", menu_items)
@@ -792,17 +792,17 @@ class DialogUI:
             return "back"
 
     def show_change_summary(self, changes):
-        lines = ["\\Zb\\Z4变更摘要:\\Zn\n"]
+        lines = [f"{Format.BOLD}{Format.BLUE}变更摘要:{Format.RESET}\n"]
         if changes.to_enable:
-            lines.append("\\Zb\\Z5启用:\\Zn")
+            lines.append(f"{Format.BOLD}{Format.MAGENTA}启用:{Format.RESET}")
             for n in changes.to_enable:
                 lines.append(f"  + {n}")
         if changes.to_disable:
-            lines.append("\n\\Zb\\Z1禁用:\\Zn")
+            lines.append(f"\n{Format.BOLD}{Format.RED}禁用:{Format.RESET}")
             for n in changes.to_disable:
                 lines.append(f"  - {n}")
         if changes.cascade_disabled:
-            lines.append("\n\\Zb\\Z3级联禁用:\\Zn")
+            lines.append(f"\n{Format.BOLD}{Format.YELLOW}级联禁用:{Format.RESET}")
             for n in changes.cascade_disabled:
                 lines.append(f"  ~ {n}")
         if changes.rejected:
@@ -833,12 +833,12 @@ class DialogUI:
             for r in groups[key]:
                 name = (r["name"] or "(全部)").ljust(max_name_w)
                 if r["status"] in ok_status:
-                    color = "\\Zb\\Z4"
+                    color = Format.BOLD + Format.BLUE
                 elif r["status"] in skip_status:
-                    color = "\\Zb\\Z5"
+                    color = Format.BOLD + Format.MAGENTA
                 else:
-                    color = "\\Zb\\Z1"
-                lines.append(f"{name}\t{color}{r['status']}\\Zn")
+                    color = Format.BOLD + Format.RED
+                lines.append(f"{name}\t{color}{r['status']}{Format.RESET}")
         self._adapter.run_msgbox("操作结果", "\n".join(lines))
 
     def show_error(self, message):
