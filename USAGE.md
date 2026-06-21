@@ -53,7 +53,7 @@ pytest --version           # 应有输出
 ```
 opencode-extension-manager/
 ├── ext_mgr.py              # 主脚本（运行此文件）
-├── extensions.json          # 扩展配置文件（version 2 格式）
+├── extensions.json          # 扩展配置文件（version 3 格式）
 ├── tests/                   # 测试文件
 │   ├── test_ext_mgr.py      # 测试用例
 │   └── conftest.py          # 测试 fixtures
@@ -67,47 +67,52 @@ opencode-extension-manager/
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "extensions": {
-    "<extension-name>": {
-      "type": "skill",
-      "enabled": true,
-      "description": "扩展的描述信息",
-      "depends": [
-        "<other-extension-name>",
-        {"source": "skills/example", "target": "skills/example"}
-      ]
-    }
+    "skills": {
+      "<extension-name>": {
+        "enabled": true,
+        "description": "扩展的描述信息",
+        "depends": [
+          "<other-extension-name>",
+          {"source": "skills/example", "target": "skills/example"}
+        ]
+      }
+    },
+    "agents": {},
+    "commands": {},
+    "plugins": {}
   }
 }
 ```
+
+`extensions` 下按扩展类型分为 4 个分类组，每个扩展放在对应的分类组下，扩展本身**不再需要** `type` 字段——类型由其所属分类组决定。
 
 ### 字段说明
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `version` | integer | 是 | 必须为 `2`（不支持旧版 `1`） |
-| `extensions` | object | 是 | 以纯扩展名为键的扩展字典 |
-| `type` | string | 是 | 扩展类型，必须为 `skill`、`agent`、`command`、`plugin` 之一 |
+| `version` | integer | 是 | 必须为 `3`（不支持旧版 `1`/`2`） |
+| `extensions` | object | 是 | 包含 4 个分类组的对象 |
+| `extensions.skills` | object | 否 | 技能扩展组（键为扩展名） |
+| `extensions.agents` | object | 否 | 智能体扩展组 |
+| `extensions.commands` | object | 否 | 命令编排扩展组 |
+| `extensions.plugins` | object | 否 | 插件扩展组 |
 | `enabled` | boolean | 是 | 初始启用状态 |
 | `description` | string | 是 | 扩展描述（在 TUI 中显示） |
 | `depends` | array | 否 | 依赖列表，支持扩展依赖（字符串）和路径依赖（对象）混合 |
+| `visible` | boolean | 否 | 是否在 TUI 管理界面显示此扩展，默认 `true`。设为 `false` 的扩展仅作为其他扩展的依赖被自动管理，不出现在勾选列表中 |
 
-### 扩展键名规则
+### 分类组
 
-扩展的键名为纯名称，**不允许**包含 `/`、`..`、不以 `/` 开头：
-
-- 正确：`"brainstorming"`、`"kernel-side-code-developer"`
-- 错误：`"skills/brainstorming"`、`"../evil"`
-
-### type 取值
-
-| 类型 | 说明 |
+| 分类组 | 说明 |
 |------|------|
-| `skill` | 技能扩展 |
-| `agent` | 智能体扩展 |
-| `command` | 命令编排扩展 |
-| `plugin` | 插件扩展 |
+| `skills` | 技能扩展 |
+| `agents` | 智能体扩展 |
+| `commands` | 命令编排扩展 |
+| `plugins` | 插件扩展 |
+
+分类组可省略（省略时视为空组），但 `extensions` 下不允许出现这 4 个以外的键。同一个扩展名不可出现在多个分类组中。
 
 ### depends 混合格式
 
@@ -132,58 +137,63 @@ opencode-extension-manager/
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "extensions": {
-    "brainstorming": {
-      "type": "skill",
-      "enabled": true,
-      "description": "结构化头脑风暴",
-      "depends": [
-        {"source": "skills/brainstorming", "target": "skills/brainstorming"}
-      ]
+    "skills": {
+      "brainstorming": {
+        "enabled": true,
+        "description": "结构化头脑风暴",
+        "depends": [
+          {"source": "skills/brainstorming", "target": "skills/brainstorming"}
+        ]
+      },
+      "diagram-generator": {
+        "enabled": false,
+        "description": "生成架构图和流程图",
+        "depends": [
+          {"source": "skills/diagram-generator", "target": "skills/diagram-generator"}
+        ]
+      },
+      "ascend-c-integrated-development": {
+        "enabled": true,
+        "description": "Ascend C自定义算子全流程开发",
+        "depends": [
+          "kernel-side-code-developer",
+          "host-side-code-developer",
+          "onnx-plugin-developer",
+          {"source": "skills/ascend-c-integrated-development", "target": "skills/ascend-c-integrated-development"}
+        ]
+      }
     },
-    "diagram-generator": {
-      "type": "skill",
-      "enabled": false,
-      "description": "生成架构图和流程图",
-      "depends": [
-        {"source": "skills/diagram-generator", "target": "skills/diagram-generator"}
-      ]
+    "agents": {
+      "kernel-side-code-developer": {
+        "enabled": true,
+        "visible": false,
+        "description": "Kernel侧代码开发",
+        "depends": [
+          {"source": "agents/kernel-side-code-developer.md", "target": "agents/kernel-side-code-developer.md"}
+        ]
+      }
     },
-    "kernel-side-code-developer": {
-      "type": "agent",
-      "enabled": true,
-      "description": "Kernel侧代码开发",
-      "depends": [
-        {"source": "agents/kernel-side-code-developer.md", "target": "agents/kernel-side-code-developer.md"}
-      ]
+    "commands": {
+      "cpp-code-review": {
+        "enabled": false,
+        "description": "C++逻辑缺陷检测",
+        "depends": [
+          "cpp-memory-reviewer",
+          "cpp-concurrency-reviewer",
+          "cpp-logic-reviewer",
+          "cpp-bug-scorer",
+          {"source": "commands/cpp-code-review.md", "target": "commands/cpp-code-review.md"}
+        ]
+      }
     },
-    "ascend-c-integrated-development": {
-      "type": "skill",
-      "enabled": true,
-      "description": "Ascend C自定义算子全流程开发",
-      "depends": [
-        "kernel-side-code-developer",
-        "host-side-code-developer",
-        "onnx-plugin-developer",
-        {"source": "skills/ascend-c-integrated-development", "target": "skills/ascend-c-integrated-development"}
-      ]
-    },
-    "cpp-code-review": {
-      "type": "command",
-      "enabled": false,
-      "description": "C++逻辑缺陷检测",
-      "depends": [
-        "cpp-memory-reviewer",
-        "cpp-concurrency-reviewer",
-        "cpp-logic-reviewer",
-        "cpp-bug-scorer",
-        {"source": "commands/cpp-code-review.md", "target": "commands/cpp-code-review.md"}
-      ]
-    }
+    "plugins": {}
   }
 }
 ```
+
+上例中 `kernel-side-code-developer` 设为 `visible: false`，它仅作为 `ascend-c-integrated-development` 的依赖被自动启用/级联禁用，不会出现在 TUI 勾选界面中。
 
 ## 运行
 
@@ -202,7 +212,7 @@ python3 ext_mgr.py
 
 ### 2. 扩展分类主界面
 
-主界面按扩展类型（`type` 字段）分组显示：
+主界面按扩展分类（`skills`/`agents`/`commands`/`plugins` 分类组）分组显示。设为 `visible: false` 的扩展不出现在列表中，但仍参与依赖管理：
 
 - **Skills — 技能扩展**
 - **Agents — 智能体**
@@ -293,10 +303,10 @@ python3 ext_mgr.py
 ### Q: version 不支持
 
 ```
-错误: 不支持的 version: 1
+错误: 不支持的 version: 2
 ```
 
-**解决**：将 `extensions.json` 中的 `version` 改为 `2`，并按新格式更新扩展配置。
+**解决**：将 `extensions.json` 中的 `version` 改为 `3`，并按 version 3 的嵌套分类格式更新扩展配置（扩展放在 `skills`/`agents`/`commands`/`plugins` 分类组下，移除 `type` 字段）。
 
 ### Q: 扩展键名格式错误
 
@@ -304,7 +314,15 @@ python3 ext_mgr.py
 扩展键名 'skills/xxx' 格式错误，应为纯名称（不含 /）
 ```
 
-**解决**：将键名改为纯名称（如 `"brainstorming"`），类型通过 `type` 字段指定。
+**解决**：将键名改为纯名称（如 `"brainstorming"`），类型通过所属分类组指定。
+
+### Q: 未知的扩展分类
+
+```
+未知的扩展分类 'xxx'，必须为 skills, agents, commands, plugins
+```
+
+**解决**：`extensions` 下只允许 `skills`、`agents`、`commands`、`plugins` 四个键，将扩展移入对应分类组。
 
 ### Q: 扩展安装失败（冲突）
 
@@ -322,13 +340,21 @@ python3 ext_mgr.py
 
 **解决**：修改 `extensions.json` 中的 `depends` 字段，消除循环引用。
 
-### Q: 缺少 type 字段
+### Q: 缺少 enabled / description 字段
 
 ```
-扩展 'xxx' 缺少 type 字段
+扩展 'xxx' 缺少 enabled 字段
 ```
 
-**解决**：为该扩展添加 `"type"` 字段，值为 `skill`、`agent`、`command` 或 `plugin`。
+**解决**：为该扩展添加 `"enabled"` 和 `"description"` 字段。
+
+### Q: visible 字段类型错误
+
+```
+扩展 'xxx' 的 visible 必须为布尔值
+```
+
+**解决**：`visible` 字段只能为 `true` 或 `false`，或不填（默认 `true`）。
 
 ### Q: 路径依赖缺少字段
 

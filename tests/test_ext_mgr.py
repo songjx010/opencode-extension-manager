@@ -56,42 +56,46 @@ def _write_config(tmp_path, config_dict):
 
 def _valid_config():
     return {
-        "version": 2,
+        "version": 3,
         "extensions": {
-            "brainstorming": {
-                "type": "skill",
-                "enabled": True,
-                "description": "头脑风暴",
-                "depends": [
-                    {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
-                ],
+            "skills": {
+                "brainstorming": {
+                    "enabled": True,
+                    "description": "头脑风暴",
+                    "depends": [
+                        {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
+                    ],
+                },
             },
-            "kernel-dev": {
-                "type": "agent",
-                "enabled": False,
-                "description": "Kernel开发",
-                "depends": [
-                    "brainstorming",
-                    {"source": "agents/kernel.md", "target": "agents/kernel.md"},
-                ],
+            "agents": {
+                "kernel-dev": {
+                    "enabled": False,
+                    "description": "Kernel开发",
+                    "depends": [
+                        "brainstorming",
+                        {"source": "agents/kernel.md", "target": "agents/kernel.md"},
+                    ],
+                },
             },
+            "commands": {},
+            "plugins": {},
         },
     }
 
 
-def test_validate_version2_ok(tmp_path):
+def test_validate_version3_ok(tmp_path):
     p = _write_config(tmp_path, _valid_config())
     mgr = ConfigManager(p)
     config = mgr.load()
-    assert config["version"] == 2
+    assert config["version"] == 3
     assert config["warnings"] == []
 
 
-def test_validate_version1_rejected(tmp_path):
+def test_validate_version2_rejected(tmp_path):
     cfg = _valid_config()
-    cfg["version"] = 1
+    cfg["version"] = 2
     p = _write_config(tmp_path, cfg)
-    with pytest.raises(ConfigError, match="不支持的 version: 1"):
+    with pytest.raises(ConfigError, match="不支持的 version: 2"):
         ConfigManager(p).load()
 
 
@@ -103,42 +107,107 @@ def test_validate_missing_version(tmp_path):
         ConfigManager(p).load()
 
 
-def test_validate_type_skill_ok(tmp_path):
+def test_validate_type_derived_from_group(tmp_path):
     cfg = _valid_config()
-    cfg["extensions"]["brainstorming"]["type"] = "skill"
     p = _write_config(tmp_path, cfg)
     config = ConfigManager(p).load()
     assert config["extensions"]["brainstorming"]["type"] == "skill"
+    assert config["extensions"]["kernel-dev"]["type"] == "agent"
 
 
-def test_validate_type_plugin_ok(tmp_path):
+def test_validate_move_to_plugins_group(tmp_path):
     cfg = _valid_config()
-    cfg["extensions"]["brainstorming"]["type"] = "plugin"
+    ext = cfg["extensions"]["skills"].pop("brainstorming")
+    cfg["extensions"]["plugins"]["brainstorming"] = ext
     p = _write_config(tmp_path, cfg)
     config = ConfigManager(p).load()
     assert config["extensions"]["brainstorming"]["type"] == "plugin"
 
 
-def test_validate_type_unknown_rejected(tmp_path):
+def test_validate_unknown_group_rejected(tmp_path):
     cfg = _valid_config()
-    cfg["extensions"]["brainstorming"]["type"] = "unknown"
+    cfg["extensions"]["unknown"] = {}
     p = _write_config(tmp_path, cfg)
-    with pytest.raises(ConfigError, match="type 'unknown' 不合法"):
+    with pytest.raises(ConfigError, match="未知的扩展分类 'unknown'"):
         ConfigManager(p).load()
 
 
-def test_validate_missing_type(tmp_path):
-    cfg = _valid_config()
-    del cfg["extensions"]["brainstorming"]["type"]
+def test_validate_missing_groups_ok(tmp_path):
+    cfg = {
+        "version": 3,
+        "extensions": {
+            "skills": {
+                "brainstorming": {
+                    "enabled": True,
+                    "description": "头脑风暴",
+                }
+            }
+        },
+    }
     p = _write_config(tmp_path, cfg)
-    with pytest.raises(ConfigError, match="缺少 type 字段"):
+    config = ConfigManager(p).load()
+    assert config["extensions"]["brainstorming"]["type"] == "skill"
+
+
+def test_validate_visible_defaults_true(tmp_path):
+    cfg = _valid_config()
+    p = _write_config(tmp_path, cfg)
+    config = ConfigManager(p).load()
+    assert config["extensions"]["brainstorming"]["visible"] is True
+
+
+def test_validate_visible_false_ok(tmp_path):
+    cfg = _valid_config()
+    cfg["extensions"]["skills"]["brainstorming"]["visible"] = False
+    p = _write_config(tmp_path, cfg)
+    config = ConfigManager(p).load()
+    assert config["extensions"]["brainstorming"]["visible"] is False
+
+
+def test_validate_visible_non_bool_rejected(tmp_path):
+    cfg = _valid_config()
+    cfg["extensions"]["skills"]["brainstorming"]["visible"] = "yes"
+    p = _write_config(tmp_path, cfg)
+    with pytest.raises(ConfigError, match="visible 必须为布尔值"):
         ConfigManager(p).load()
+
+
+def test_validate_duplicate_name_across_groups_rejected(tmp_path):
+    cfg = _valid_config()
+    ext = cfg["extensions"]["skills"]["brainstorming"]
+    cfg["extensions"]["agents"]["brainstorming"] = dict(ext)
+    p = _write_config(tmp_path, cfg)
+    with pytest.raises(ConfigError, match="多个分类中重复"):
+        ConfigManager(p).load()
+
+
+def test_save_produces_nested_format(tmp_path):
+    p = _write_config(tmp_path, _valid_config())
+    mgr = ConfigManager(p)
+    config = mgr.load()
+    mgr.save(config)
+    with open(p, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+    assert raw["version"] == 3
+    assert "skills" in raw["extensions"]
+    assert "brainstorming" in raw["extensions"]["skills"]
+    assert "type" not in raw["extensions"]["skills"]["brainstorming"]
+
+
+def test_save_omits_default_visible(tmp_path):
+    p = _write_config(tmp_path, _valid_config())
+    mgr = ConfigManager(p)
+    config = mgr.load()
+    mgr.save(config)
+    with open(p, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+    assert "visible" not in raw["extensions"]["skills"]["brainstorming"]
 
 
 def test_validate_key_with_slash_rejected(tmp_path):
     cfg = _valid_config()
-    ext = cfg["extensions"].pop("brainstorming")
-    cfg["extensions"]["skills/brainstorming"] = ext
+    ext = cfg["extensions"]["skills"].pop("brainstorming")
+    cfg["extensions"]["skills"]["skills/brainstorming"] = ext
     p = _write_config(tmp_path, cfg)
     with pytest.raises(ConfigError, match="格式错误"):
         ConfigManager(p).load()
@@ -146,8 +215,8 @@ def test_validate_key_with_slash_rejected(tmp_path):
 
 def test_validate_key_with_dotdot_rejected(tmp_path):
     cfg = _valid_config()
-    ext = cfg["extensions"].pop("brainstorming")
-    cfg["extensions"]["../evil"] = ext
+    ext = cfg["extensions"]["skills"].pop("brainstorming")
+    cfg["extensions"]["skills"]["../evil"] = ext
     p = _write_config(tmp_path, cfg)
     with pytest.raises(ConfigError, match="非法字符"):
         ConfigManager(p).load()
@@ -155,7 +224,7 @@ def test_validate_key_with_dotdot_rejected(tmp_path):
 
 def test_validate_depends_path_dep_missing_source(tmp_path):
     cfg = _valid_config()
-    cfg["extensions"]["brainstorming"]["depends"] = [
+    cfg["extensions"]["skills"]["brainstorming"]["depends"] = [
         {"target": "skills/brainstorming.md"}
     ]
     p = _write_config(tmp_path, cfg)
@@ -165,7 +234,7 @@ def test_validate_depends_path_dep_missing_source(tmp_path):
 
 def test_validate_depends_invalid_type(tmp_path):
     cfg = _valid_config()
-    cfg["extensions"]["brainstorming"]["depends"] = [123]
+    cfg["extensions"]["skills"]["brainstorming"]["depends"] = [123]
     p = _write_config(tmp_path, cfg)
     with pytest.raises(ConfigError, match="依赖类型不合法"):
         ConfigManager(p).load()
@@ -173,7 +242,7 @@ def test_validate_depends_invalid_type(tmp_path):
 
 def test_validate_ext_dep_not_exist_warning(tmp_path):
     cfg = _valid_config()
-    cfg["extensions"]["brainstorming"]["depends"] = ["nonexistent"]
+    cfg["extensions"]["skills"]["brainstorming"]["depends"] = ["nonexistent"]
     p = _write_config(tmp_path, cfg)
     config = ConfigManager(p).load()
     assert any("nonexistent" in w for w in config["warnings"])
@@ -181,7 +250,7 @@ def test_validate_ext_dep_not_exist_warning(tmp_path):
 
 def test_validate_ext_dep_with_slash_rejected(tmp_path):
     cfg = _valid_config()
-    cfg["extensions"]["brainstorming"]["depends"] = ["skills/other"]
+    cfg["extensions"]["skills"]["brainstorming"]["depends"] = ["skills/other"]
     p = _write_config(tmp_path, cfg)
     with pytest.raises(ConfigError, match="格式错误"):
         ConfigManager(p).load()
@@ -189,14 +258,14 @@ def test_validate_ext_dep_with_slash_rejected(tmp_path):
 
 def test_validate_ext_dep_empty_rejected(tmp_path):
     cfg = _valid_config()
-    cfg["extensions"]["brainstorming"]["depends"] = [""]
+    cfg["extensions"]["skills"]["brainstorming"]["depends"] = [""]
     p = _write_config(tmp_path, cfg)
     with pytest.raises(ConfigError, match="扩展依赖名称不能为空"):
         ConfigManager(p).load()
 
 
 def test_validate_empty_extensions_ok(tmp_path):
-    cfg = {"version": 2, "extensions": {}}
+    cfg = {"version": 3, "extensions": {}}
     p = _write_config(tmp_path, cfg)
     config = ConfigManager(p).load()
     assert config["extensions"] == {}
@@ -204,7 +273,7 @@ def test_validate_empty_extensions_ok(tmp_path):
 
 def test_validate_empty_depends_ok(tmp_path):
     cfg = _valid_config()
-    cfg["extensions"]["brainstorming"]["depends"] = []
+    cfg["extensions"]["skills"]["brainstorming"]["depends"] = []
     p = _write_config(tmp_path, cfg)
     config = ConfigManager(p).load()
     assert config["warnings"] == []
@@ -219,19 +288,21 @@ def test_no_cycle(tmp_path):
 
 def test_simple_cycle(tmp_path):
     cfg = {
-        "version": 2,
+        "version": 3,
         "extensions": {
-            "a": {
-                "type": "skill",
-                "enabled": True,
-                "description": "A",
-                "depends": ["b"],
+            "skills": {
+                "a": {
+                    "enabled": True,
+                    "description": "A",
+                    "depends": ["b"],
+                },
             },
-            "b": {
-                "type": "agent",
-                "enabled": True,
-                "description": "B",
-                "depends": ["a"],
+            "agents": {
+                "b": {
+                    "enabled": True,
+                    "description": "B",
+                    "depends": ["a"],
+                },
             },
         },
     }
@@ -242,28 +313,31 @@ def test_simple_cycle(tmp_path):
 
 def test_three_node_cycle(tmp_path):
     cfg = {
-        "version": 2,
+        "version": 3,
         "extensions": {
-            "a": {
-                "type": "skill",
-                "enabled": True,
-                "description": "A",
-                "depends": ["b"],
+            "skills": {
+                "a": {
+                    "enabled": True,
+                    "description": "A",
+                    "depends": ["b"],
+                },
             },
-            "b": {
-                "type": "agent",
-                "enabled": True,
-                "description": "B",
-                "depends": ["c"],
+            "agents": {
+                "b": {
+                    "enabled": True,
+                    "description": "B",
+                    "depends": ["c"],
+                },
             },
-            "c": {
-                "type": "command",
-                "enabled": True,
-                "description": "C",
-                "depends": [
-                    "a",
-                    {"source": "c.md", "target": "c.md"},
-                ],
+            "commands": {
+                "c": {
+                    "enabled": True,
+                    "description": "C",
+                    "depends": [
+                        "a",
+                        {"source": "c.md", "target": "c.md"},
+                    ],
+                },
             },
         },
     }
@@ -274,24 +348,26 @@ def test_three_node_cycle(tmp_path):
 
 def test_cycle_with_path_deps_no_false_positive(tmp_path):
     cfg = {
-        "version": 2,
+        "version": 3,
         "extensions": {
-            "a": {
-                "type": "skill",
-                "enabled": True,
-                "description": "A",
-                "depends": [
-                    {"source": "a.md", "target": "a.md"},
-                ],
+            "skills": {
+                "a": {
+                    "enabled": True,
+                    "description": "A",
+                    "depends": [
+                        {"source": "a.md", "target": "a.md"},
+                    ],
+                },
             },
-            "b": {
-                "type": "agent",
-                "enabled": True,
-                "description": "B",
-                "depends": [
-                    "a",
-                    {"source": "b.md", "target": "b.md"},
-                ],
+            "agents": {
+                "b": {
+                    "enabled": True,
+                    "description": "B",
+                    "depends": [
+                        "a",
+                        {"source": "b.md", "target": "b.md"},
+                    ],
+                },
             },
         },
     }
@@ -810,6 +886,72 @@ def test_build_checklist_items_filters_agent():
     names = [i[0] for i in items]
     assert "kernel-dev" in names
     assert "brainstorming" not in names
+
+
+def test_build_checklist_items_filters_invisible():
+    ui = _make_ui()
+    exts = {
+        "visible-skill": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Visible",
+            "visible": True,
+        },
+        "hidden-skill": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Hidden",
+            "visible": False,
+        },
+    }
+    items, unavailable = ui._build_checklist_items(exts, "skill")
+    names = [i[0] for i in items]
+    assert "visible-skill" in names
+    assert "hidden-skill" not in names
+
+
+def test_count_stats_excludes_invisible():
+    ui = _make_ui()
+    exts = {
+        "visible-skill": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Visible",
+            "visible": True,
+        },
+        "hidden-skill": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Hidden",
+            "visible": False,
+        },
+    }
+    total, enabled, ok = ui._count_stats(exts, "skill")
+    assert total == 1
+    assert enabled == 1
+
+
+def test_show_type_checklist_does_not_toggle_invisible():
+    adapter = MagicMock()
+    config_mgr = MagicMock()
+    ui = DialogUI(adapter, config_mgr, "/fake")
+    exts = {
+        "visible-ext": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Visible",
+            "visible": True,
+        },
+        "hidden-ext": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Hidden",
+            "visible": False,
+        },
+    }
+    adapter.run_checklist.return_value = (0, [], [])
+    ui._show_type_checklist(exts, "skill")
+    assert exts["hidden-ext"]["enabled"] is True
 
 
 def test_count_stats_by_type():

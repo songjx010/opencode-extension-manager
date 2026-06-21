@@ -10,7 +10,13 @@ import sys
 import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 
-VALID_TYPES = {"skill", "agent", "command", "plugin"}
+GROUP_TO_TYPE = {
+    "skills": "skill",
+    "agents": "agent",
+    "commands": "command",
+    "plugins": "plugin",
+}
+TYPE_TO_GROUP = {v: k for k, v in GROUP_TO_TYPE.items()}
 
 
 def parse_depends(depends_list):
@@ -51,7 +57,23 @@ class ConfigManager:
         return config
 
     def save(self, config: dict) -> None:
-        data = {k: v for k, v in config.items() if k != "warnings"}
+        nested_extensions = {group: {} for group in TYPE_TO_GROUP.values()}
+        for name, ext in config.get("extensions", {}).items():
+            ext_type = ext.get("type")
+            group = TYPE_TO_GROUP.get(ext_type)
+            if group is None:
+                continue
+            ext_copy = {
+                k: v
+                for k, v in ext.items()
+                if k != "type" and not (k == "visible" and v is True)
+            }
+            nested_extensions[group][name] = ext_copy
+
+        data = {
+            k: v for k, v in config.items() if k not in ("warnings", "extensions")
+        }
+        data["extensions"] = nested_extensions
         content = json.dumps(data, indent=2, ensure_ascii=False)
 
         dir_name = os.path.dirname(self._config_path) or "."
@@ -71,7 +93,7 @@ class ConfigManager:
 
         if "version" not in config:
             raise ConfigError("缺少 version 字段")
-        if config["version"] != 2:
+        if config["version"] != 3:
             raise ConfigError(f"不支持的 version: {config['version']}")
 
         if "extensions" not in config:
@@ -79,24 +101,45 @@ class ConfigManager:
         if not isinstance(config["extensions"], dict):
             raise ConfigError("extensions 必须为对象")
 
-        exts = config["extensions"]
-        for name, ext in exts.items():
-            if not isinstance(ext, dict):
-                errors.append(f"扩展 '{name}' 必须为对象")
-                continue
+        raw_groups = config["extensions"]
+        for group in raw_groups:
+            if group not in GROUP_TO_TYPE:
+                errors.append(
+                    f"未知的扩展分类 '{group}'，"
+                    f"必须为 {', '.join(GROUP_TO_TYPE.keys())}"
+                )
+        if errors:
+            raise ConfigError("; ".join(errors))
 
+        flat: Dict[str, dict] = {}
+        for group, exts_in_group in raw_groups.items():
+            if not isinstance(exts_in_group, dict):
+                errors.append(f"分类 '{group}' 必须为对象")
+                continue
+            ext_type = GROUP_TO_TYPE[group]
+            for name, ext in exts_in_group.items():
+                if not isinstance(ext, dict):
+                    errors.append(f"扩展 '{name}' 必须为对象")
+                    continue
+                if name in flat:
+                    errors.append(f"扩展名 '{name}' 在多个分类中重复")
+                    continue
+                ext_copy = dict(ext)
+                ext_copy["type"] = ext_type
+                ext_copy.setdefault("visible", True)
+                flat[name] = ext_copy
+        if errors:
+            raise ConfigError("; ".join(errors))
+
+        for name, ext in flat.items():
             if "enabled" not in ext:
                 errors.append(f"扩展 '{name}' 缺少 enabled 字段")
             if "description" not in ext:
                 errors.append(f"扩展 '{name}' 缺少 description 字段")
 
-            if "type" not in ext:
-                errors.append(f"扩展 '{name}' 缺少 type 字段")
-            elif ext["type"] not in VALID_TYPES:
-                errors.append(
-                    f"扩展 '{name}' 的 type '{ext['type']}' 不合法，"
-                    f"必须为 {', '.join(sorted(VALID_TYPES))}"
-                )
+            vis = ext.get("visible")
+            if vis is not None and not isinstance(vis, bool):
+                errors.append(f"扩展 '{name}' 的 visible 必须为布尔值")
 
             if "/" in name:
                 errors.append(f"扩展键名 '{name}' 格式错误，应为纯名称（不含 /）")
@@ -111,7 +154,7 @@ class ConfigManager:
                         errors.append(f"扩展 '{name}' 的扩展依赖名称不能为空")
                     elif "/" in dep or ".." in dep or dep.startswith("/"):
                         errors.append(f"扩展 '{name}' 的扩展依赖 '{dep}' 格式错误")
-                    elif dep not in exts:
+                    elif dep not in flat:
                         warnings.append(f"扩展 '{name}' 的依赖 '{dep}' 不存在")
                 elif isinstance(dep, dict):
                     if "source" not in dep or "target" not in dep:
@@ -126,8 +169,9 @@ class ConfigManager:
         if errors:
             raise ConfigError("; ".join(errors))
 
-        self._check_circular_deps(exts)
+        self._check_circular_deps(flat)
 
+        config["extensions"] = flat
         return warnings
 
     def _check_circular_deps(self, exts: dict) -> None:
@@ -599,6 +643,8 @@ class DialogUI:
         for name, ext in extensions.items():
             if ext.get("type") != ext_type:
                 continue
+            if not ext.get("visible", True):
+                continue
             missing = self._check_availability(name, extensions)
             if missing:
                 unavailable.add(name)
@@ -617,6 +663,8 @@ class DialogUI:
         enabled = 0
         for name, ext in extensions.items():
             if ext.get("type") != ext_type:
+                continue
+            if not ext.get("visible", True):
                 continue
             total += 1
             if ext.get("enabled", False):
@@ -707,7 +755,7 @@ class DialogUI:
             newly_enabled = set()
             newly_disabled = set()
             for name, ext in extensions.items():
-                if ext.get("type") == ext_type:
+                if ext.get("type") == ext_type and ext.get("visible", True):
                     was_enabled = ext.get("enabled", False)
                     now_enabled = name in selected
                     ext["enabled"] = now_enabled
