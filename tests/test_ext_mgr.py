@@ -220,6 +220,37 @@ def test_save_omits_default_visible(tmp_path):
     assert "visible" not in raw["extensions"]["skills"]["brainstorming"]
 
 
+def test_save_preserves_key_order(tmp_path):
+    raw = {
+        "version": 3,
+        "extensions": {
+            "skills": {
+                "visible-default": {
+                    "enabled": True,
+                    "description": "D",
+                    "depends": [{"source": "a.md", "target": "a.md"}],
+                },
+                "hidden": {
+                    "enabled": False,
+                    "visible": False,
+                    "description": "H",
+                    "depends": [{"source": "b.md", "target": "b.md"}],
+                },
+            },
+            "agents": {}, "commands": {}, "plugins": {},
+        },
+    }
+    p = _write_config(tmp_path, raw)
+    config = ConfigManager(str(p)).load()
+    # toggle nothing; save back
+    ConfigManager(str(p)).save(config)
+    with open(p, "r", encoding="utf-8") as f:
+        saved = json.load(f)
+    skills = saved["extensions"]["skills"]
+    assert list(skills["visible-default"].keys()) == ["enabled", "description", "depends"]
+    assert list(skills["hidden"].keys()) == ["enabled", "visible", "description", "depends"]
+
+
 def test_validate_key_with_slash_rejected(tmp_path):
     cfg = _valid_config()
     ext = cfg["extensions"]["skills"].pop("brainstorming")
@@ -452,7 +483,6 @@ def test_resolve_disable_no_cascade():
 
 def test_resolve_reject_if_depended():
     exts = make_extensions_from_raw(_extensions_for_resolver())
-    exts["a"].enabled = True
     cs = ExtensionStore(exts).resolve_changes(["a"])
     rejected_names = [r["name"] for r in cs.rejected]
     assert "b" not in rejected_names
@@ -1214,7 +1244,7 @@ def test_show_change_summary_cascade_before_rejected():
     assert cascade_idx < rejected_idx
 
 
-def test_cascade_disable_deps_disables_child():
+def test_cascade_disable_disables_child():
     exts = make_extensions_from_raw({
         "parent": {
             "type": "skill",
@@ -1234,7 +1264,7 @@ def test_cascade_disable_deps_disables_child():
     assert exts["child"].enabled is False
 
 
-def test_cascade_disable_deps_keeps_child_if_other_parent_enabled():
+def test_cascade_disable_keeps_child_if_other_parent_enabled():
     exts = make_extensions_from_raw({
         "parent-a": {
             "type": "skill",
@@ -1260,7 +1290,7 @@ def test_cascade_disable_deps_keeps_child_if_other_parent_enabled():
     assert exts["shared-child"].enabled is True
 
 
-def test_cascade_disable_deps_transitive():
+def test_cascade_disable_transitive():
     exts = make_extensions_from_raw({
         "parent": {
             "type": "skill",

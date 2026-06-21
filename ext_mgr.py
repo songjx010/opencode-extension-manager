@@ -783,7 +783,7 @@ class DialogUI:
                     continue
                 was_enabled = ext.enabled
                 now_enabled = ext.name in selected
-                ext.enabled = now_enabled
+                self._store.set_enabled(ext.name, now_enabled)
                 if was_enabled and not now_enabled:
                     newly_disabled.add(ext.name)
 
