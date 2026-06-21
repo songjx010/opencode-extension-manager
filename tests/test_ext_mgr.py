@@ -1,7 +1,23 @@
 import json
 import os
 import pytest
-from ext_mgr import parse_depends, ConfigManager, ConfigError
+from unittest.mock import MagicMock
+from ext_mgr import (
+    parse_depends,
+    ConfigManager,
+    ConfigError,
+    ExtensionStore,
+    ChangeSet,
+    SymlinkManager,
+    Validator,
+    DialogUI,
+    Extension,
+    PathDep,
+    Config,
+    Status,
+    Format,
+    DEFAULT_TARGET_DIR,
+)
 
 
 def test_parse_depends_empty():
@@ -87,8 +103,8 @@ def test_validate_version3_ok(tmp_path):
     p = _write_config(tmp_path, _valid_config())
     mgr = ConfigManager(p)
     config = mgr.load()
-    assert config["version"] == 3
-    assert config["warnings"] == []
+    assert config.version == 3
+    assert config.warnings == []
 
 
 def test_validate_version2_rejected(tmp_path):
@@ -111,8 +127,8 @@ def test_validate_type_derived_from_group(tmp_path):
     cfg = _valid_config()
     p = _write_config(tmp_path, cfg)
     config = ConfigManager(p).load()
-    assert config["extensions"]["brainstorming"]["type"] == "skill"
-    assert config["extensions"]["kernel-dev"]["type"] == "agent"
+    assert config.extensions["brainstorming"].type == "skill"
+    assert config.extensions["kernel-dev"].type == "agent"
 
 
 def test_validate_move_to_plugins_group(tmp_path):
@@ -121,7 +137,7 @@ def test_validate_move_to_plugins_group(tmp_path):
     cfg["extensions"]["plugins"]["brainstorming"] = ext
     p = _write_config(tmp_path, cfg)
     config = ConfigManager(p).load()
-    assert config["extensions"]["brainstorming"]["type"] == "plugin"
+    assert config.extensions["brainstorming"].type == "plugin"
 
 
 def test_validate_unknown_group_rejected(tmp_path):
@@ -146,14 +162,14 @@ def test_validate_missing_groups_ok(tmp_path):
     }
     p = _write_config(tmp_path, cfg)
     config = ConfigManager(p).load()
-    assert config["extensions"]["brainstorming"]["type"] == "skill"
+    assert config.extensions["brainstorming"].type == "skill"
 
 
 def test_validate_visible_defaults_true(tmp_path):
     cfg = _valid_config()
     p = _write_config(tmp_path, cfg)
     config = ConfigManager(p).load()
-    assert config["extensions"]["brainstorming"]["visible"] is True
+    assert config.extensions["brainstorming"].visible is True
 
 
 def test_validate_visible_false_ok(tmp_path):
@@ -161,7 +177,7 @@ def test_validate_visible_false_ok(tmp_path):
     cfg["extensions"]["skills"]["brainstorming"]["visible"] = False
     p = _write_config(tmp_path, cfg)
     config = ConfigManager(p).load()
-    assert config["extensions"]["brainstorming"]["visible"] is False
+    assert config.extensions["brainstorming"].visible is False
 
 
 def test_validate_visible_non_bool_rejected(tmp_path):
@@ -245,7 +261,7 @@ def test_validate_ext_dep_not_exist_warning(tmp_path):
     cfg["extensions"]["skills"]["brainstorming"]["depends"] = ["nonexistent"]
     p = _write_config(tmp_path, cfg)
     config = ConfigManager(p).load()
-    assert any("nonexistent" in w for w in config["warnings"])
+    assert any("nonexistent" in w for w in config.warnings)
 
 
 def test_validate_ext_dep_with_slash_rejected(tmp_path):
@@ -268,7 +284,7 @@ def test_validate_empty_extensions_ok(tmp_path):
     cfg = {"version": 3, "extensions": {}}
     p = _write_config(tmp_path, cfg)
     config = ConfigManager(p).load()
-    assert config["extensions"] == {}
+    assert config.extensions == {}
 
 
 def test_validate_empty_depends_ok(tmp_path):
@@ -276,14 +292,14 @@ def test_validate_empty_depends_ok(tmp_path):
     cfg["extensions"]["skills"]["brainstorming"]["depends"] = []
     p = _write_config(tmp_path, cfg)
     config = ConfigManager(p).load()
-    assert config["warnings"] == []
+    assert config.warnings == []
 
 
 def test_no_cycle(tmp_path):
     cfg = _valid_config()
     p = _write_config(tmp_path, cfg)
     config = ConfigManager(p).load()
-    assert config["warnings"] == []
+    assert config.warnings == []
 
 
 def test_simple_cycle(tmp_path):
@@ -373,10 +389,7 @@ def test_cycle_with_path_deps_no_false_positive(tmp_path):
     }
     p = _write_config(tmp_path, cfg)
     config = ConfigManager(p).load()
-    assert config["warnings"] == []
-
-
-from ext_mgr import DependencyResolver
+    assert config.warnings == []
 
 
 def _extensions_for_resolver():
@@ -412,69 +425,59 @@ def _extensions_for_resolver():
 
 
 def test_resolve_single_ext():
-    resolver = DependencyResolver()
-    exts = _extensions_for_resolver()
-    result = resolver.resolve(["standalone"], exts)
-    assert result["to_enable"] == ["standalone"]
-    assert "standalone" not in result["to_disable"]
+    exts = make_extensions_from_raw(_extensions_for_resolver())
+    cs = ExtensionStore(exts).resolve_changes(["standalone"])
+    assert cs.to_enable == ["standalone"]
+    assert "standalone" not in cs.to_disable
 
 
 def test_resolve_with_ext_dep():
-    resolver = DependencyResolver()
-    exts = _extensions_for_resolver()
-    result = resolver.resolve(["a"], exts)
-    assert "a" in result["to_enable"]
-    assert "b" in result["to_enable"]
+    exts = make_extensions_from_raw(_extensions_for_resolver())
+    cs = ExtensionStore(exts).resolve_changes(["a"])
+    assert "a" in cs.to_enable
+    assert "b" in cs.to_enable
 
 
 def test_resolve_transitive_deps():
-    resolver = DependencyResolver()
-    exts = _extensions_for_resolver()
-    result = resolver.resolve(["a"], exts)
-    assert sorted(result["to_enable"]) == ["a", "b", "c"]
+    exts = make_extensions_from_raw(_extensions_for_resolver())
+    cs = ExtensionStore(exts).resolve_changes(["a"])
+    assert sorted(cs.to_enable) == ["a", "b", "c"]
 
 
 def test_resolve_disable_no_cascade():
-    resolver = DependencyResolver()
-    exts = _extensions_for_resolver()
-    result = resolver.resolve(["a"], exts)
-    assert "standalone" in result["to_disable"]
+    exts = make_extensions_from_raw(_extensions_for_resolver())
+    cs = ExtensionStore(exts).resolve_changes(["a"])
+    assert "standalone" in cs.to_disable
 
 
 def test_resolve_reject_if_depended():
-    resolver = DependencyResolver()
-    exts = _extensions_for_resolver()
-    exts["a"]["enabled"] = True
-    result = resolver.resolve(["a"], exts)
-    rejected_names = [r["name"] for r in result["rejected"]]
+    exts = make_extensions_from_raw(_extensions_for_resolver())
+    exts["a"].enabled = True
+    cs = ExtensionStore(exts).resolve_changes(["a"])
+    rejected_names = [r["name"] for r in cs.rejected]
     assert "b" not in rejected_names
     assert "c" not in rejected_names
 
 
 def test_resolve_ext_dep_not_in_extensions():
-    resolver = DependencyResolver()
-    exts = {
+    exts = make_extensions_from_raw({
         "a": {
             "type": "skill",
             "enabled": False,
             "description": "A",
             "depends": ["nonexistent"],
         }
-    }
-    result = resolver.resolve(["a"], exts)
-    assert result["to_enable"] == ["a"]
+    })
+    cs = ExtensionStore(exts).resolve_changes(["a"])
+    assert cs.to_enable == ["a"]
 
 
 def test_resolve_all_enabled_no_disable():
-    resolver = DependencyResolver()
-    exts = _extensions_for_resolver()
-    result = resolver.resolve(["a", "standalone"], exts)
-    assert result["to_enable"] == ["a", "b", "c", "standalone"]
-    assert result["to_disable"] == []
-    assert result["rejected"] == []
-
-
-from ext_mgr import SymlinkManager
+    exts = make_extensions_from_raw(_extensions_for_resolver())
+    cs = ExtensionStore(exts).resolve_changes(["a", "standalone"])
+    assert cs.to_enable == ["a", "b", "c", "standalone"]
+    assert cs.to_disable == []
+    assert cs.rejected == []
 
 
 def _setup_dirs(tmp_path):
@@ -490,7 +493,7 @@ def test_create_symlink_success(tmp_path):
     (tmp_path / "source" / "skills").mkdir()
     (tmp_path / "source" / "skills" / "brainstorming.md").write_text("skill")
     mgr = SymlinkManager(source, target)
-    exts = {
+    exts = make_extensions_from_raw({
         "brainstorming": {
             "type": "skill",
             "enabled": True,
@@ -499,7 +502,7 @@ def test_create_symlink_success(tmp_path):
                 {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
             ],
         }
-    }
+    })
     results = mgr.apply_for_extension("brainstorming", exts, "create")
     assert len(results) == 1
     assert results[0]["status"] == "success"
@@ -515,7 +518,7 @@ def test_create_symlink_already_exists_correct(tmp_path):
     (tmp_path / "target" / "skills").mkdir()
     os.symlink(str(src_file), os.path.join(target, "skills", "brainstorming.md"))
     mgr = SymlinkManager(source, target)
-    exts = {
+    exts = make_extensions_from_raw({
         "brainstorming": {
             "type": "skill",
             "enabled": True,
@@ -524,7 +527,7 @@ def test_create_symlink_already_exists_correct(tmp_path):
                 {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
             ],
         }
-    }
+    })
     results = mgr.apply_for_extension("brainstorming", exts, "create")
     assert results[0]["status"] == "skipped"
 
@@ -535,7 +538,7 @@ def test_create_symlink_conflict(tmp_path):
     conflict = tmp_path / "target" / "skills" / "brainstorming.md"
     conflict.write_text("other")
     mgr = SymlinkManager(source, target)
-    exts = {
+    exts = make_extensions_from_raw({
         "brainstorming": {
             "type": "skill",
             "enabled": True,
@@ -544,7 +547,7 @@ def test_create_symlink_conflict(tmp_path):
                 {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
             ],
         }
-    }
+    })
     results = mgr.apply_for_extension("brainstorming", exts, "create")
     assert results[0]["status"] == "conflict"
 
@@ -557,7 +560,7 @@ def test_remove_symlink_success(tmp_path):
     (tmp_path / "target" / "skills").mkdir()
     os.symlink(str(src_file), os.path.join(target, "skills", "brainstorming.md"))
     mgr = SymlinkManager(source, target)
-    exts = {
+    exts = make_extensions_from_raw({
         "brainstorming": {
             "type": "skill",
             "enabled": True,
@@ -566,7 +569,7 @@ def test_remove_symlink_success(tmp_path):
                 {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
             ],
         }
-    }
+    })
     results = mgr.apply_for_extension("brainstorming", exts, "remove")
     assert results[0]["status"] == "success"
     assert not os.path.exists(os.path.join(target, "skills", "brainstorming.md"))
@@ -575,7 +578,7 @@ def test_remove_symlink_success(tmp_path):
 def test_remove_symlink_not_exist(tmp_path):
     source, target = _setup_dirs(tmp_path)
     mgr = SymlinkManager(source, target)
-    exts = {
+    exts = make_extensions_from_raw({
         "brainstorming": {
             "type": "skill",
             "enabled": True,
@@ -584,7 +587,7 @@ def test_remove_symlink_not_exist(tmp_path):
                 {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
             ],
         }
-    }
+    })
     results = mgr.apply_for_extension("brainstorming", exts, "remove")
     assert results[0]["status"] == "skipped"
 
@@ -595,7 +598,7 @@ def test_apply_for_extension_multiple_paths(tmp_path):
     (tmp_path / "source" / "skills" / "main.md").write_text("main")
     (tmp_path / "source" / "skills" / "helper.md").write_text("helper")
     mgr = SymlinkManager(source, target)
-    exts = {
+    exts = make_extensions_from_raw({
         "multi": {
             "type": "skill",
             "enabled": True,
@@ -605,7 +608,7 @@ def test_apply_for_extension_multiple_paths(tmp_path):
                 {"source": "skills/helper.md", "target": "skills/helper.md"},
             ],
         }
-    }
+    })
     results = mgr.apply_for_extension("multi", exts, "create")
     assert len(results) == 2
     assert all(r["status"] == "success" for r in results)
@@ -614,14 +617,14 @@ def test_apply_for_extension_multiple_paths(tmp_path):
 def test_apply_for_extension_no_path_deps(tmp_path):
     source, target = _setup_dirs(tmp_path)
     mgr = SymlinkManager(source, target)
-    exts = {
+    exts = make_extensions_from_raw({
         "pure-dep": {
             "type": "skill",
             "enabled": True,
             "description": "PureDep",
             "depends": ["other-ext"],
         }
-    }
+    })
     results = mgr.apply_for_extension("pure-dep", exts, "create")
     assert len(results) == 1
     assert results[0]["status"] == "skipped"
@@ -636,7 +639,7 @@ def test_apply_changes_with_extensions(tmp_path):
     (tmp_path / "target" / "skills").mkdir(parents=True, exist_ok=True)
     os.symlink(str(src_b), os.path.join(target, "skills", "b.md"))
     mgr = SymlinkManager(source, target)
-    exts = {
+    exts = make_extensions_from_raw({
         "ext-a": {
             "type": "skill",
             "enabled": True,
@@ -649,14 +652,11 @@ def test_apply_changes_with_extensions(tmp_path):
             "description": "B",
             "depends": [{"source": "skills/b.md", "target": "skills/b.md"}],
         },
-    }
+    })
     results = mgr.apply_changes(["ext-a"], ["ext-b"], exts)
     success_names = [r["name"] for r in results if r["status"] == "success"]
     assert "skills/a.md" in success_names
     assert "skills/b.md" in success_names
-
-
-from ext_mgr import Validator
 
 
 def test_validate_enabled_ok(tmp_path):
@@ -667,7 +667,7 @@ def test_validate_enabled_ok(tmp_path):
     (tmp_path / "target" / "skills").mkdir()
     os.symlink(str(src_file), os.path.join(target, "skills", "brainstorming.md"))
     validator = Validator(source, target)
-    exts = {
+    exts = make_extensions_from_raw({
         "brainstorming": {
             "type": "skill",
             "enabled": True,
@@ -676,7 +676,7 @@ def test_validate_enabled_ok(tmp_path):
                 {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
             ],
         }
-    }
+    })
     results = validator.validate(exts)
     assert len(results) == 1
     assert results[0]["status"] == "ok"
@@ -685,7 +685,7 @@ def test_validate_enabled_ok(tmp_path):
 def test_validate_enabled_missing(tmp_path):
     source, target = _setup_dirs(tmp_path)
     validator = Validator(source, target)
-    exts = {
+    exts = make_extensions_from_raw({
         "brainstorming": {
             "type": "skill",
             "enabled": True,
@@ -694,7 +694,7 @@ def test_validate_enabled_missing(tmp_path):
                 {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
             ],
         }
-    }
+    })
     results = validator.validate(exts)
     assert any(r["status"] == "missing" for r in results)
 
@@ -707,7 +707,7 @@ def test_validate_disabled_unexpected(tmp_path):
     (tmp_path / "target" / "skills").mkdir()
     os.symlink(str(src_file), os.path.join(target, "skills", "brainstorming.md"))
     validator = Validator(source, target)
-    exts = {
+    exts = make_extensions_from_raw({
         "brainstorming": {
             "type": "skill",
             "enabled": False,
@@ -716,7 +716,7 @@ def test_validate_disabled_unexpected(tmp_path):
                 {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
             ],
         }
-    }
+    })
     results = validator.validate(exts)
     assert any(r["status"] == "unexpected" for r in results)
 
@@ -729,7 +729,7 @@ def test_validate_enabled_broken_link(tmp_path):
     (tmp_path / "target" / "skills").mkdir()
     os.symlink("/nonexistent/path", os.path.join(target, "skills", "brainstorming.md"))
     validator = Validator(source, target)
-    exts = {
+    exts = make_extensions_from_raw({
         "brainstorming": {
             "type": "skill",
             "enabled": True,
@@ -738,7 +738,7 @@ def test_validate_enabled_broken_link(tmp_path):
                 {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
             ],
         }
-    }
+    })
     results = validator.validate(exts)
     assert any(r["status"] == "broken" for r in results)
 
@@ -748,7 +748,7 @@ def test_validate_no_target_dir(tmp_path):
     target = str(tmp_path / "nonexistent_target")
     os.makedirs(source)
     validator = Validator(source, target)
-    exts = {
+    exts = make_extensions_from_raw({
         "brainstorming": {
             "type": "skill",
             "enabled": True,
@@ -757,7 +757,7 @@ def test_validate_no_target_dir(tmp_path):
                 {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
             ],
         }
-    }
+    })
     results = validator.validate(exts)
     assert any(r["status"] == "missing" for r in results)
 
@@ -770,7 +770,7 @@ def test_validate_multiple_paths_per_extension(tmp_path):
     src_main = tmp_path / "source" / "skills" / "main.md"
     os.symlink(str(src_main), os.path.join(target, "skills", "main.md"))
     validator = Validator(source, target)
-    exts = {
+    exts = make_extensions_from_raw({
         "multi": {
             "type": "skill",
             "enabled": True,
@@ -780,29 +780,25 @@ def test_validate_multiple_paths_per_extension(tmp_path):
                 {"source": "skills/helper.md", "target": "skills/helper.md"},
             ],
         }
-    }
+    })
     results = validator.validate(exts)
     statuses = [r["status"] for r in results]
     assert "ok" not in statuses
     assert any(s == "missing" for s in statuses)
 
 
-from unittest.mock import MagicMock
-from ext_mgr import DialogUI
-
-
-def _make_ui(source_dir="/fake"):
+def _make_ui(extensions, source_dir="/fake"):
     adapter = MagicMock()
     config_mgr = MagicMock()
-    ui = DialogUI(adapter, config_mgr, source_dir)
-    return ui
+    store = ExtensionStore(make_extensions_from_raw(extensions), source_dir=source_dir)
+    ui = DialogUI(adapter, store, config_mgr)
+    return ui, store
 
 
 def test_check_availability_all_present(tmp_path):
     (tmp_path / "skills").mkdir()
     (tmp_path / "skills" / "brainstorming.md").write_text("skill")
-    ui = _make_ui(str(tmp_path))
-    exts = {
+    exts = make_extensions_from_raw({
         "brainstorming": {
             "type": "skill",
             "enabled": True,
@@ -811,30 +807,30 @@ def test_check_availability_all_present(tmp_path):
                 {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
             ],
         }
-    }
-    missing = ui._check_availability("brainstorming", exts)
+    })
+    store = ExtensionStore(exts, source_dir=str(tmp_path))
+    missing = store.check_availability("brainstorming")
     assert missing == []
 
 
 def test_check_availability_ext_dep_missing(tmp_path):
     (tmp_path / "skills").mkdir()
     (tmp_path / "skills" / "brainstorming.md").write_text("skill")
-    ui = _make_ui(str(tmp_path))
-    exts = {
+    exts = make_extensions_from_raw({
         "brainstorming": {
             "type": "skill",
             "enabled": True,
             "description": "Brainstorm",
             "depends": ["nonexistent-ext"],
         }
-    }
-    missing = ui._check_availability("brainstorming", exts)
+    })
+    store = ExtensionStore(exts, source_dir=str(tmp_path))
+    missing = store.check_availability("brainstorming")
     assert "nonexistent-ext" in missing
 
 
 def test_check_availability_path_dep_source_missing(tmp_path):
-    ui = _make_ui(str(tmp_path))
-    exts = {
+    exts = make_extensions_from_raw({
         "brainstorming": {
             "type": "skill",
             "enabled": True,
@@ -843,13 +839,13 @@ def test_check_availability_path_dep_source_missing(tmp_path):
                 {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
             ],
         }
-    }
-    missing = ui._check_availability("brainstorming", exts)
+    })
+    store = ExtensionStore(exts, source_dir=str(tmp_path))
+    missing = store.check_availability("brainstorming")
     assert "skills/brainstorming.md" in missing
 
 
 def test_build_checklist_items_filters_by_type():
-    ui = _make_ui()
     exts = {
         "brainstorming": {
             "type": "skill",
@@ -862,14 +858,14 @@ def test_build_checklist_items_filters_by_type():
             "description": "Kernel Dev",
         },
     }
-    items, unavailable = ui._build_checklist_items(exts, "skill")
+    ui, _ = _make_ui(exts)
+    items, unavailable = ui._build_checklist_items("skill")
     names = [i[0] for i in items]
     assert "brainstorming" in names
     assert "kernel-dev" not in names
 
 
 def test_build_checklist_items_filters_agent():
-    ui = _make_ui()
     exts = {
         "brainstorming": {
             "type": "skill",
@@ -882,14 +878,14 @@ def test_build_checklist_items_filters_agent():
             "description": "Kernel Dev",
         },
     }
-    items, unavailable = ui._build_checklist_items(exts, "agent")
+    ui, _ = _make_ui(exts)
+    items, unavailable = ui._build_checklist_items("agent")
     names = [i[0] for i in items]
     assert "kernel-dev" in names
     assert "brainstorming" not in names
 
 
 def test_build_checklist_items_filters_invisible():
-    ui = _make_ui()
     exts = {
         "visible-skill": {
             "type": "skill",
@@ -904,14 +900,14 @@ def test_build_checklist_items_filters_invisible():
             "visible": False,
         },
     }
-    items, unavailable = ui._build_checklist_items(exts, "skill")
+    ui, _ = _make_ui(exts)
+    items, unavailable = ui._build_checklist_items("skill")
     names = [i[0] for i in items]
     assert "visible-skill" in names
     assert "hidden-skill" not in names
 
 
 def test_count_stats_excludes_invisible():
-    ui = _make_ui()
     exts = {
         "visible-skill": {
             "type": "skill",
@@ -926,7 +922,8 @@ def test_count_stats_excludes_invisible():
             "visible": False,
         },
     }
-    total, enabled, ok = ui._count_stats(exts, "skill")
+    ui, _ = _make_ui(exts)
+    total, enabled, ok = ui._count_stats("skill")
     assert total == 1
     assert enabled == 1
 
@@ -934,8 +931,7 @@ def test_count_stats_excludes_invisible():
 def test_show_type_checklist_does_not_toggle_invisible():
     adapter = MagicMock()
     config_mgr = MagicMock()
-    ui = DialogUI(adapter, config_mgr, "/fake")
-    exts = {
+    exts = make_extensions_from_raw({
         "visible-ext": {
             "type": "skill",
             "enabled": True,
@@ -948,14 +944,15 @@ def test_show_type_checklist_does_not_toggle_invisible():
             "description": "Hidden",
             "visible": False,
         },
-    }
+    })
+    store = ExtensionStore(exts)
+    ui = DialogUI(adapter, store, config_mgr)
     adapter.run_checklist.return_value = (0, [], [])
-    ui._show_type_checklist(exts, "skill")
-    assert exts["hidden-ext"]["enabled"] is True
+    ui._show_type_checklist("skill")
+    assert exts["hidden-ext"].enabled is True
 
 
 def test_count_stats_by_type():
-    ui = _make_ui()
     exts = {
         "brainstorming": {
             "type": "skill",
@@ -973,13 +970,13 @@ def test_count_stats_by_type():
             "description": "Kernel Dev",
         },
     }
-    total, enabled, ok = ui._count_stats(exts, "skill")
+    ui, _ = _make_ui(exts)
+    total, enabled, ok = ui._count_stats("skill")
     assert total == 2
     assert enabled == 1
 
 
 def test_count_stats_empty_type():
-    ui = _make_ui()
     exts = {
         "brainstorming": {
             "type": "skill",
@@ -987,14 +984,14 @@ def test_count_stats_empty_type():
             "description": "Brainstorm",
         },
     }
-    total, enabled, ok = ui._count_stats(exts, "plugin")
+    ui, _ = _make_ui(exts)
+    total, enabled, ok = ui._count_stats("plugin")
     assert total == 0
     assert enabled == 0
 
 
 def test_cascade_simple():
-    resolver = DependencyResolver()
-    exts = {
+    exts = make_extensions_from_raw({
         "a": {
             "type": "skill",
             "enabled": True,
@@ -1007,17 +1004,16 @@ def test_cascade_simple():
             "description": "B",
             "depends": [{"source": "b.md", "target": "b.md"}],
         },
-    }
-    result = resolver.resolve(["b"], exts)
-    assert result["to_enable"] == ["b"]
-    assert result["to_disable"] == ["a"]
-    assert result["cascade_disabled"] == []
-    assert result["rejected"] == []
+    })
+    cs = ExtensionStore(exts).resolve_changes(["b"])
+    assert cs.to_enable == ["b"]
+    assert cs.to_disable == ["a"]
+    assert cs.cascade_disabled == []
+    assert cs.rejected == []
 
 
 def test_cascade_recursive():
-    resolver = DependencyResolver()
-    exts = {
+    exts = make_extensions_from_raw({
         "a": {
             "type": "skill",
             "enabled": True,
@@ -1036,15 +1032,14 @@ def test_cascade_recursive():
             "description": "C",
             "depends": [{"source": "c.md", "target": "c.md"}],
         },
-    }
-    result = resolver.resolve([], exts)
-    assert result["to_disable"] == ["a"]
-    assert sorted(result["cascade_disabled"]) == ["b", "c"]
+    })
+    cs = ExtensionStore(exts).resolve_changes([])
+    assert cs.to_disable == ["a"]
+    assert sorted(cs.cascade_disabled) == ["b", "c"]
 
 
 def test_cascade_stopped_by_other_dependent():
-    resolver = DependencyResolver()
-    exts = {
+    exts = make_extensions_from_raw({
         "a": {
             "type": "skill",
             "enabled": True,
@@ -1069,16 +1064,15 @@ def test_cascade_stopped_by_other_dependent():
             "description": "D",
             "depends": ["c", {"source": "d.md", "target": "d.md"}],
         },
-    }
-    result = resolver.resolve(["d"], exts)
-    assert "a" in result["to_disable"]
-    assert "b" in result["cascade_disabled"]
-    assert "c" not in result["cascade_disabled"]
+    })
+    cs = ExtensionStore(exts).resolve_changes(["d"])
+    assert "a" in cs.to_disable
+    assert "b" in cs.cascade_disabled
+    assert "c" not in cs.cascade_disabled
 
 
 def test_cascade_respects_user_selection():
-    resolver = DependencyResolver()
-    exts = {
+    exts = make_extensions_from_raw({
         "a": {
             "type": "skill",
             "enabled": True,
@@ -1091,15 +1085,14 @@ def test_cascade_respects_user_selection():
             "description": "B",
             "depends": [{"source": "b.md", "target": "b.md"}],
         },
-    }
-    result = resolver.resolve(["b"], exts)
-    assert result["to_enable"] == ["b"]
-    assert "b" not in result["cascade_disabled"]
+    })
+    cs = ExtensionStore(exts).resolve_changes(["b"])
+    assert cs.to_enable == ["b"]
+    assert "b" not in cs.cascade_disabled
 
 
 def test_cascade_shared_dep_disabled_together():
-    resolver = DependencyResolver()
-    exts = {
+    exts = make_extensions_from_raw({
         "a": {
             "type": "skill",
             "enabled": True,
@@ -1118,15 +1111,14 @@ def test_cascade_shared_dep_disabled_together():
             "description": "C",
             "depends": [{"source": "c.md", "target": "c.md"}],
         },
-    }
-    result = resolver.resolve([], exts)
-    assert sorted(result["to_disable"]) == ["a", "b"]
-    assert result["cascade_disabled"] == ["c"]
+    })
+    cs = ExtensionStore(exts).resolve_changes([])
+    assert sorted(cs.to_disable) == ["a", "b"]
+    assert cs.cascade_disabled == ["c"]
 
 
 def test_cascade_no_cascade_when_dep_in_selected():
-    resolver = DependencyResolver()
-    exts = {
+    exts = make_extensions_from_raw({
         "a": {
             "type": "skill",
             "enabled": True,
@@ -1145,44 +1137,43 @@ def test_cascade_no_cascade_when_dep_in_selected():
             "description": "Standalone",
             "depends": [{"source": "s.md", "target": "s.md"}],
         },
-    }
-    result = resolver.resolve(["standalone"], exts)
-    assert "b" in result["cascade_disabled"]
-    assert "standalone" in result["to_enable"]
+    })
+    cs = ExtensionStore(exts).resolve_changes(["standalone"])
+    assert "b" in cs.cascade_disabled
+    assert "standalone" in cs.to_enable
 
 
 def test_cascade_with_existing_test_data():
-    resolver = DependencyResolver()
-    exts = _extensions_for_resolver()
-    result = resolver.resolve([], exts)
-    assert "a" in result["to_disable"]
-    assert sorted(result["cascade_disabled"]) == ["b", "c"]
-    assert "standalone" in result["to_disable"]
+    exts = make_extensions_from_raw(_extensions_for_resolver())
+    cs = ExtensionStore(exts).resolve_changes([])
+    assert "a" in cs.to_disable
+    assert sorted(cs.cascade_disabled) == ["b", "c"]
+    assert "standalone" in cs.to_disable
 
 
 def test_cascade_disabled_in_result_for_no_change():
-    resolver = DependencyResolver()
-    exts = _extensions_for_resolver()
-    result = resolver.resolve(["a", "standalone"], exts)
-    assert result["cascade_disabled"] == []
+    exts = make_extensions_from_raw(_extensions_for_resolver())
+    cs = ExtensionStore(exts).resolve_changes(["a", "standalone"])
+    assert cs.cascade_disabled == []
 
 
 def _make_ui_for_summary():
     adapter = MagicMock()
     config_mgr = MagicMock()
     adapter.run_yesno.return_value = 0
-    ui = DialogUI(adapter, config_mgr, "/fake")
+    store = ExtensionStore({})
+    ui = DialogUI(adapter, store, config_mgr)
     return ui, adapter
 
 
 def test_show_change_summary_with_cascade():
     ui, adapter = _make_ui_for_summary()
-    changes = {
-        "to_enable": ["x"],
-        "to_disable": ["a"],
-        "cascade_disabled": ["b", "c"],
-        "rejected": [],
-    }
+    changes = ChangeSet(
+        to_enable=["x"],
+        to_disable=["a"],
+        cascade_disabled=["b", "c"],
+        rejected=[],
+    )
     ui.show_change_summary(changes)
     call_args = adapter.run_yesno.call_args
     text = call_args[0][1]
@@ -1194,12 +1185,12 @@ def test_show_change_summary_with_cascade():
 
 def test_show_change_summary_no_cascade():
     ui, adapter = _make_ui_for_summary()
-    changes = {
-        "to_enable": ["x"],
-        "to_disable": ["a"],
-        "cascade_disabled": [],
-        "rejected": [],
-    }
+    changes = ChangeSet(
+        to_enable=["x"],
+        to_disable=["a"],
+        cascade_disabled=[],
+        rejected=[],
+    )
     ui.show_change_summary(changes)
     call_args = adapter.run_yesno.call_args
     text = call_args[0][1]
@@ -1208,12 +1199,12 @@ def test_show_change_summary_no_cascade():
 
 def test_show_change_summary_cascade_before_rejected():
     ui, adapter = _make_ui_for_summary()
-    changes = {
-        "to_enable": [],
-        "to_disable": ["a"],
-        "cascade_disabled": ["b"],
-        "rejected": [{"name": "c", "reason": "被依赖", "dependents": ["d"]}],
-    }
+    changes = ChangeSet(
+        to_enable=[],
+        to_disable=["a"],
+        cascade_disabled=["b"],
+        rejected=[{"name": "c", "reason": "被依赖", "dependents": ["d"]}],
+    )
     ui.show_change_summary(changes)
     call_args = adapter.run_yesno.call_args
     text = call_args[0][1]
@@ -1224,8 +1215,7 @@ def test_show_change_summary_cascade_before_rejected():
 
 
 def test_cascade_disable_deps_disables_child():
-    ui = _make_ui()
-    exts = {
+    exts = make_extensions_from_raw({
         "parent": {
             "type": "skill",
             "enabled": True,
@@ -1238,14 +1228,14 @@ def test_cascade_disable_deps_disables_child():
             "description": "Child",
             "depends": [],
         },
-    }
-    ui._cascade_disable_deps({"parent"}, exts)
-    assert exts["child"]["enabled"] is False
+    })
+    store = ExtensionStore(exts)
+    store.cascade_disable({"parent"})
+    assert exts["child"].enabled is False
 
 
 def test_cascade_disable_deps_keeps_child_if_other_parent_enabled():
-    ui = _make_ui()
-    exts = {
+    exts = make_extensions_from_raw({
         "parent-a": {
             "type": "skill",
             "enabled": False,
@@ -1264,14 +1254,14 @@ def test_cascade_disable_deps_keeps_child_if_other_parent_enabled():
             "description": "Shared Child",
             "depends": [],
         },
-    }
-    ui._cascade_disable_deps({"parent-a"}, exts)
-    assert exts["shared-child"]["enabled"] is True
+    })
+    store = ExtensionStore(exts)
+    store.cascade_disable({"parent-a"})
+    assert exts["shared-child"].enabled is True
 
 
 def test_cascade_disable_deps_transitive():
-    ui = _make_ui()
-    exts = {
+    exts = make_extensions_from_raw({
         "parent": {
             "type": "skill",
             "enabled": True,
@@ -1290,17 +1280,17 @@ def test_cascade_disable_deps_transitive():
             "description": "Leaf",
             "depends": [],
         },
-    }
-    ui._cascade_disable_deps({"parent"}, exts)
-    assert exts["mid"]["enabled"] is False
-    assert exts["leaf"]["enabled"] is False
+    })
+    store = ExtensionStore(exts)
+    store.cascade_disable({"parent"})
+    assert exts["mid"].enabled is False
+    assert exts["leaf"].enabled is False
 
 
 def test_show_type_checklist_cascades_disable_across_types():
     adapter = MagicMock()
     config_mgr = MagicMock()
-    ui = DialogUI(adapter, config_mgr, "/fake")
-    exts = {
+    exts = make_extensions_from_raw({
         "parent": {
             "type": "skill",
             "enabled": True,
@@ -1313,14 +1303,13 @@ def test_show_type_checklist_cascades_disable_across_types():
             "description": "Child agent",
             "depends": [],
         },
-    }
+    })
+    store = ExtensionStore(exts)
+    ui = DialogUI(adapter, store, config_mgr)
     adapter.run_checklist.return_value = (0, [], [])
-    ui._show_type_checklist(exts, "skill")
-    assert exts["parent"]["enabled"] is False
-    assert exts["child-agent"]["enabled"] is False
-
-
-from ext_mgr import Extension, PathDep, Config, ChangeSet, Status, Format, DEFAULT_TARGET_DIR
+    ui._show_type_checklist("skill")
+    assert exts["parent"].enabled is False
+    assert exts["child-agent"].enabled is False
 
 
 def make_extensions(spec):
@@ -1344,6 +1333,25 @@ def make_extensions(spec):
             description=attrs.get("description", ""),
             ext_deps=list(attrs.get("ext_deps", [])),
             path_deps=[PathDep(s, t) for s, t in attrs.get("path_deps", [])],
+            visible=attrs.get("visible", True),
+        )
+    return extensions
+
+
+def make_extensions_from_raw(raw):
+    """把旧式 raw dict[name -> {type,enabled,description,depends,visible}]
+    转为 dict[name -> Extension]。depends 用 parse_depends 拆分。
+    用于把既有测试的 raw fixture 喂给新 API。"""
+    extensions = {}
+    for name, attrs in raw.items():
+        ext_deps, path_deps = parse_depends(attrs.get("depends", []))
+        extensions[name] = Extension(
+            name=name,
+            type=attrs.get("type", "skill"),
+            enabled=attrs.get("enabled", False),
+            description=attrs.get("description", ""),
+            ext_deps=ext_deps,
+            path_deps=[PathDep(p["source"], p["target"]) for p in path_deps],
             visible=attrs.get("visible", True),
         )
     return extensions
@@ -1421,9 +1429,6 @@ def test_make_extensions_defaults():
     exts = make_extensions({"x": {"type": "command", "enabled": True}})
     assert exts["x"].description == ""
     assert exts["x"].visible is True
-
-
-from ext_mgr import ExtensionStore
 
 
 def _store_a():
