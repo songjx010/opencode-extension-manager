@@ -955,6 +955,7 @@ def main():
         sys.exit(0)
 
     symlink_mgr = SymlinkManager(script_dir, target)
+    npm_mgr = NpmDependencyManager(script_dir)
 
     while True:
         action, selected = ui.show_extension_list()
@@ -982,6 +983,13 @@ def main():
         results = symlink_mgr.apply_changes(
             changes.to_enable, all_disable, store.extensions
         )
+        has_plugin = any(
+            store.extensions[n].type == "plugin"
+            for n in changes.to_enable if n in store.extensions
+        )
+        if has_plugin:
+            ui.show_installing_progress()
+            results += npm_mgr.install_for(changes.to_enable, store.extensions)
         ui.show_results(results)
 
         try:
