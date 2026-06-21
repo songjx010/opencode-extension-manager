@@ -1679,3 +1679,56 @@ def test_npm_install_no_package_json_skipped(tmp_path):
         results = mgr.install_for(["p"], exts)
     assert results == []
     assert mock_run.call_count == 0
+
+
+def test_npm_install_filters_non_plugin_types(tmp_path):
+    pkg_dir = tmp_path / "sk"
+    pkg_dir.mkdir()
+    (pkg_dir / "package.json").write_text("{}")
+    exts = make_extensions({
+        "sk": {"type": "skill", "enabled": False,
+               "path_deps": [(str(pkg_dir), "skills/sk")]},
+    })
+    mgr = NpmDependencyManager(str(tmp_path))
+    with patch("ext_mgr.subprocess.run") as mock_run, \
+         patch("ext_mgr.shutil.which", return_value="/usr/bin/npm"):
+        results = mgr.install_for(["sk"], exts)
+    assert results == []
+    assert mock_run.call_count == 0
+
+
+def test_npm_install_dedup_single_plugin_two_deps(tmp_path):
+    pkg_dir = tmp_path / "p"
+    pkg_dir.mkdir()
+    (pkg_dir / "package.json").write_text("{}")
+    (pkg_dir / "index.js").write_text("")
+    (pkg_dir / "extra.js").write_text("")
+    exts = make_extensions({
+        "p": {"type": "plugin", "enabled": False,
+              "path_deps": [(str(pkg_dir / "index.js"), "a.js"),
+                            (str(pkg_dir / "extra.js"), "b.js")]},
+    })
+    mgr = NpmDependencyManager(str(tmp_path))
+    fake = MagicMock(returncode=0, stderr="", stdout="")
+    with patch("ext_mgr.subprocess.run", return_value=fake) as mock_run, \
+         patch("ext_mgr.shutil.which", return_value="/usr/bin/npm"):
+        mgr.install_for(["p"], exts)
+    assert mock_run.call_count == 1
+
+
+def test_npm_install_dedup_two_plugins_shared_dir(tmp_path):
+    pkg_dir = tmp_path / "shared"
+    pkg_dir.mkdir()
+    (pkg_dir / "package.json").write_text("{}")
+    exts = make_extensions({
+        "p1": {"type": "plugin", "enabled": False,
+               "path_deps": [(str(pkg_dir), "plugins/p1")]},
+        "p2": {"type": "plugin", "enabled": False,
+               "path_deps": [(str(pkg_dir), "plugins/p2")]},
+    })
+    mgr = NpmDependencyManager(str(tmp_path))
+    fake = MagicMock(returncode=0, stderr="", stdout="")
+    with patch("ext_mgr.subprocess.run", return_value=fake) as mock_run, \
+         patch("ext_mgr.shutil.which", return_value="/usr/bin/npm"):
+        mgr.install_for(["p1", "p2"], exts)
+    assert mock_run.call_count == 1
