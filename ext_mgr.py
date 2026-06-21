@@ -734,6 +734,19 @@ class DialogAdapter:
         except FileNotFoundError:
             return -1
 
+    def run_infobox(self, text):
+        term_h, term_w = DialogAdapter._term_size()
+        h = max(term_h - 4, 20)
+        w = max(term_w - 10, 70)
+        args = ["dialog", "--stdout", "--colors", "--infobox", text,
+                str(h), str(w)]
+        try:
+            result = subprocess.run(args, capture_output=True, text=True,
+                                    env=os.environ.copy())
+            return result.returncode
+        except FileNotFoundError:
+            return -1
+
 
 class DialogUI:
     TYPES_LABELS = {
@@ -915,6 +928,9 @@ class DialogUI:
 
     def show_error(self, message):
         self._adapter.run_msgbox("错误", message)
+
+    def show_installing_progress(self):
+        self._adapter.run_infobox("正在安装插件依赖，请稍候...")
 
 
 def main():

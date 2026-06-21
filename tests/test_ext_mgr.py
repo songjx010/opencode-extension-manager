@@ -18,6 +18,7 @@ from ext_mgr import (
     Config,
     Status,
     Format,
+    DialogAdapter,
     DEFAULT_TARGET_DIR,
 )
 
@@ -1801,3 +1802,25 @@ def test_npm_install_external_absolute_path(tmp_path):
         results = mgr.install_for(["p"], exts)
     assert results[0]["status"] == Status.SUCCESS
     assert mock_run.call_args.kwargs["cwd"] == str(ext_dir)
+
+
+# ---------- 安装进度提示 ----------
+
+def test_show_installing_progress_calls_infobox():
+    adapter = MagicMock()
+    store = ExtensionStore({}, source_dir="/fake")
+    ui = DialogUI(adapter, store, MagicMock())
+    ui.show_installing_progress()
+    adapter.run_infobox.assert_called_once()
+    args, _ = adapter.run_infobox.call_args
+    assert "安装" in args[0] and "依赖" in args[0]
+
+
+def test_run_infobox_builds_dialog_args(tmp_path):
+    adapter = DialogAdapter()
+    with patch("ext_mgr.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0)
+        adapter.run_infobox("正在安装插件依赖，请稍候...")
+    cmd = mock_run.call_args.args[0]
+    assert "--infobox" in cmd
+    assert "正在安装插件依赖，请稍候..." in cmd
