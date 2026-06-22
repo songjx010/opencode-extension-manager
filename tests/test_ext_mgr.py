@@ -75,7 +75,7 @@ def _write_config(tmp_path, config_dict):
 
 def _valid_config():
     return {
-        "version": 3,
+        "version": 4,
         "extensions": {
             "skills": {
                 "brainstorming": {
@@ -93,7 +93,7 @@ def _valid_config():
                     "visible": True,
                     "description": "Kernel开发",
                     "depends": [
-                        "brainstorming",
+                        "skills/brainstorming",
                         {"source": "agents/kernel.md", "target": "agents/kernel.md"},
                     ],
                 },
@@ -104,11 +104,11 @@ def _valid_config():
     }
 
 
-def test_validate_version3_ok(tmp_path):
+def test_validate_version4_ok(tmp_path):
     p = _write_config(tmp_path, _valid_config())
     mgr = ConfigManager(p)
     config = mgr.load()
-    assert config.version == 3
+    assert config.version == 4
     assert config.warnings == []
 
 
@@ -140,6 +140,10 @@ def test_validate_move_to_plugins_group(tmp_path):
     cfg = _valid_config()
     ext = cfg["extensions"]["skills"].pop("brainstorming")
     cfg["extensions"]["plugins"]["brainstorming"] = ext
+    cfg["extensions"]["agents"]["kernel-dev"]["depends"] = [
+        "plugins/brainstorming",
+        {"source": "agents/kernel.md", "target": "agents/kernel.md"},
+    ]
     p = _write_config(tmp_path, cfg)
     config = ConfigManager(p).load()
     assert config.extensions["brainstorming"].type == "plugin"
@@ -155,7 +159,7 @@ def test_validate_unknown_group_rejected(tmp_path):
 
 def test_validate_missing_groups_ok(tmp_path):
     cfg = {
-        "version": 3,
+        "version": 4,
         "extensions": {
             "skills": {
                 "brainstorming": {
@@ -218,7 +222,7 @@ def test_save_produces_nested_format(tmp_path):
     mgr.save(config)
     with open(p, "r", encoding="utf-8") as f:
         raw = json.load(f)
-    assert raw["version"] == 3
+    assert raw["version"] == 4
     assert "skills" in raw["extensions"]
     assert "brainstorming" in raw["extensions"]["skills"]
     assert "type" not in raw["extensions"]["skills"]["brainstorming"]
@@ -236,7 +240,7 @@ def test_save_always_writes_visible(tmp_path):
 
 def test_save_preserves_key_order(tmp_path):
     raw = {
-        "version": 3,
+        "version": 4,
         "extensions": {
             "skills": {
                 "visible-default": {
@@ -302,19 +306,42 @@ def test_validate_depends_invalid_type(tmp_path):
         ConfigManager(p).load()
 
 
-def test_validate_ext_dep_not_exist_warning(tmp_path):
+def test_validate_ext_dep_group_name_ok(tmp_path):
     cfg = _valid_config()
-    cfg["extensions"]["skills"]["brainstorming"]["depends"] = ["nonexistent"]
     p = _write_config(tmp_path, cfg)
     config = ConfigManager(p).load()
-    assert any("nonexistent" in w for w in config.warnings)
+    assert config.extensions["kernel-dev"].ext_deps == ["brainstorming"]
 
 
-def test_validate_ext_dep_with_slash_rejected(tmp_path):
+def test_validate_ext_dep_not_exist_rejected(tmp_path):
     cfg = _valid_config()
-    cfg["extensions"]["skills"]["brainstorming"]["depends"] = ["skills/other"]
+    cfg["extensions"]["skills"]["brainstorming"]["depends"] = ["skills/nonexistent"]
+    p = _write_config(tmp_path, cfg)
+    with pytest.raises(ConfigError, match="不存在"):
+        ConfigManager(p).load()
+
+
+def test_validate_ext_dep_bare_name_rejected(tmp_path):
+    cfg = _valid_config()
+    cfg["extensions"]["agents"]["kernel-dev"]["depends"] = ["brainstorming"]
     p = _write_config(tmp_path, cfg)
     with pytest.raises(ConfigError, match="格式错误"):
+        ConfigManager(p).load()
+
+
+def test_validate_ext_dep_invalid_group_rejected(tmp_path):
+    cfg = _valid_config()
+    cfg["extensions"]["agents"]["kernel-dev"]["depends"] = ["unknown/brainstorming"]
+    p = _write_config(tmp_path, cfg)
+    with pytest.raises(ConfigError, match="分类 'unknown' 不合法"):
+        ConfigManager(p).load()
+
+
+def test_validate_ext_dep_group_mismatch_rejected(tmp_path):
+    cfg = _valid_config()
+    cfg["extensions"]["agents"]["kernel-dev"]["depends"] = ["agents/brainstorming"]
+    p = _write_config(tmp_path, cfg)
+    with pytest.raises(ConfigError, match="分类不匹配"):
         ConfigManager(p).load()
 
 
@@ -327,7 +354,7 @@ def test_validate_ext_dep_empty_rejected(tmp_path):
 
 
 def test_validate_empty_extensions_ok(tmp_path):
-    cfg = {"version": 3, "extensions": {}}
+    cfg = {"version": 4, "extensions": {}}
     p = _write_config(tmp_path, cfg)
     config = ConfigManager(p).load()
     assert config.extensions == {}
@@ -350,14 +377,14 @@ def test_no_cycle(tmp_path):
 
 def test_simple_cycle(tmp_path):
     cfg = {
-        "version": 3,
+        "version": 4,
         "extensions": {
             "skills": {
                 "a": {
                     "enabled": True,
                     "visible": True,
                     "description": "A",
-                    "depends": ["b"],
+                    "depends": ["agents/b"],
                 },
             },
             "agents": {
@@ -365,7 +392,7 @@ def test_simple_cycle(tmp_path):
                     "enabled": True,
                     "visible": True,
                     "description": "B",
-                    "depends": ["a"],
+                    "depends": ["skills/a"],
                 },
             },
         },
@@ -377,14 +404,14 @@ def test_simple_cycle(tmp_path):
 
 def test_three_node_cycle(tmp_path):
     cfg = {
-        "version": 3,
+        "version": 4,
         "extensions": {
             "skills": {
                 "a": {
                     "enabled": True,
                     "visible": True,
                     "description": "A",
-                    "depends": ["b"],
+                    "depends": ["agents/b"],
                 },
             },
             "agents": {
@@ -392,7 +419,7 @@ def test_three_node_cycle(tmp_path):
                     "enabled": True,
                     "visible": True,
                     "description": "B",
-                    "depends": ["c"],
+                    "depends": ["commands/c"],
                 },
             },
             "commands": {
@@ -401,7 +428,7 @@ def test_three_node_cycle(tmp_path):
                     "visible": True,
                     "description": "C",
                     "depends": [
-                        "a",
+                        "skills/a",
                         {"source": "c.md", "target": "c.md"},
                     ],
                 },
@@ -415,7 +442,7 @@ def test_three_node_cycle(tmp_path):
 
 def test_cycle_with_path_deps_no_false_positive(tmp_path):
     cfg = {
-        "version": 3,
+        "version": 4,
         "extensions": {
             "skills": {
                 "a": {
@@ -433,7 +460,7 @@ def test_cycle_with_path_deps_no_false_positive(tmp_path):
                     "visible": True,
                     "description": "B",
                     "depends": [
-                        "a",
+                        "skills/a",
                         {"source": "b.md", "target": "b.md"},
                     ],
                 },
@@ -1433,7 +1460,7 @@ def test_extension_with_deps():
 
 
 def test_config_defaults():
-    c = Config(version=3, extensions={})
+    c = Config(version=4, extensions={})
     assert c.warnings == []
     assert c.extra == {}
 

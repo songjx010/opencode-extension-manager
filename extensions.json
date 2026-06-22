@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "extensions": {
     "skills": {
       "ascend-c-integrated-development": {
@@ -7,9 +7,9 @@
         "visible": true,
         "description": "Ascend C自定义算子全流程开发（kernel/host/ONNX插件）",
         "depends": [
-          "kernel-side-code-developer",
-          "host-side-code-developer",
-          "onnx-plugin-developer",
+          "agents/kernel-side-code-developer",
+          "agents/host-side-code-developer",
+          "agents/onnx-plugin-developer",
           {
             "source": "skills/ascend-c-integrated-development",
             "target": "skills/ascend-c-integrated-development"
@@ -32,7 +32,7 @@
         "visible": true,
         "description": "深度C++代码检视（L1-L5五层金字塔），支持MR审查和本地审查",
         "depends": [
-          "code-review-cpp-guidelines",
+          "skills/code-review-cpp-guidelines",
           {
             "source": "skills/code-review-cpp-enhanced",
             "target": "skills/code-review-cpp-enhanced"
@@ -191,10 +191,10 @@
         "visible": true,
         "description": "编排复杂多步骤任务",
         "depends": [
-          "brainstorming",
-          "diagram-generator",
-          "cpp-code-review",
-          "cpp-guideline-review",
+          "skills/brainstorming",
+          "skills/diagram-generator",
+          "commands/cpp-code-review",
+          "commands/cpp-guideline-review",
           {
             "source": "commands/complex-task.md",
             "target": "commands/complex-task.md"
@@ -206,10 +206,10 @@
         "visible": true,
         "description": "C++逻辑缺陷检测（内存/并发/控制流）",
         "depends": [
-          "cpp-memory-reviewer",
-          "cpp-concurrency-reviewer",
-          "cpp-logic-reviewer",
-          "cpp-bug-scorer",
+          "agents/cpp-memory-reviewer",
+          "agents/cpp-concurrency-reviewer",
+          "agents/cpp-logic-reviewer",
+          "agents/cpp-bug-scorer",
           {
             "source": "commands/cpp-code-review.md",
             "target": "commands/cpp-code-review.md"
@@ -221,10 +221,10 @@
         "visible": true,
         "description": "C++编码规范审查（惯用法/接口/STL/规范评分）",
         "depends": [
-          "cpp-idiom-reviewer",
-          "cpp-interface-reviewer",
-          "cpp-stl-reviewer",
-          "cpp-standards-scorer",
+          "agents/cpp-idiom-reviewer",
+          "agents/cpp-interface-reviewer",
+          "agents/cpp-stl-reviewer",
+          "agents/cpp-standards-scorer",
           {
             "source": "commands/cpp-guideline-review.md",
             "target": "commands/cpp-guideline-review.md"

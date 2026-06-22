@@ -36,7 +36,7 @@ python3 ext_mgr.py
 ```
 opencode-extension-manager/
 ├── ext_mgr.py              # 主程序（单文件，运行此文件）
-├── extensions.json          # 扩展配置文件（version 3 格式）
+├── extensions.json          # 扩展配置文件（version 4 格式）
 ├── tests/
 │   ├── test_ext_mgr.py      # 测试用例
 │   └── conftest.py          # 测试路径 fixtures
@@ -55,7 +55,7 @@ opencode-extension-manager/
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "extensions": {
     "skills": {
       "<extension-name>": {
@@ -63,7 +63,7 @@ opencode-extension-manager/
         "visible": true,
         "description": "扩展的描述信息",
         "depends": [
-          "<other-extension-name>",
+          "agents/<other-extension-name>",
           {"source": "skills/example", "target": "skills/example"}
         ]
       }
@@ -81,7 +81,7 @@ opencode-extension-manager/
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `version` | integer | 是 | 必须为 `3`（不支持旧版 `1`/`2`） |
+| `version` | integer | 是 | 必须为 `4`（不支持旧版 `1`/`2`/`3`） |
 | `extensions` | object | 是 | 包含 4 个分类组的对象 |
 | `extensions.skills` | object | 否 | 技能扩展组（键为扩展名） |
 | `extensions.agents` | object | 否 | 智能体扩展组 |
@@ -90,7 +90,7 @@ opencode-extension-manager/
 | `enabled` | boolean | 是 | 初始启用状态 |
 | `visible` | boolean | 是 | 是否在 TUI 管理界面显示此扩展。设为 `false` 的扩展仅作为其他扩展的依赖被自动管理，不出现在勾选列表中。保存时无论取值均会写回配置文件 |
 | `description` | string | 是 | 扩展描述（在 TUI 中显示） |
-| `depends` | array | 否 | 依赖列表，支持扩展依赖（字符串）和路径依赖（对象）混合 |
+| `depends` | array | 否 | 依赖列表，支持扩展依赖（字符串，`分类/名称` 格式）和路径依赖（对象）混合 |
 
 ### 分类组
 
@@ -107,11 +107,13 @@ opencode-extension-manager/
 
 `depends` 列表支持两种条目：
 
-**扩展依赖**（字符串）：引用另一个扩展的键名。启用时递归展开，自动将依赖扩展也标记为启用。禁用时若依赖扩展成为孤儿（无其他已启用扩展依赖它），则自动级联禁用。
+**扩展依赖**（字符串）：以 `分类/名称` 格式引用另一个扩展，其中分类为该扩展实际所属的分组（`skills`/`agents`/`commands`/`plugins`）。启用时递归展开，自动将依赖扩展也标记为启用。禁用时若依赖扩展成为孤儿（无其他已启用扩展依赖它），则自动级联禁用。
 
 ```json
-"depends": ["other-extension"]
+"depends": ["agents/other-extension"]
 ```
+
+> 前缀分类必须与目标扩展实际所在的分组一致，否则校验报错；目标扩展不存在同样报错。保存时自动按目标扩展的类型还原 `分类/名称` 前缀写回。
 
 **路径依赖**（对象）：指定 `source`（源路径）和 `target`（目标路径）的映射。启用时在目标目录创建符号链接。
 
@@ -126,7 +128,7 @@ opencode-extension-manager/
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "extensions": {
     "skills": {
       "brainstorming": {
@@ -150,9 +152,9 @@ opencode-extension-manager/
         "visible": true,
         "description": "Ascend C自定义算子全流程开发",
         "depends": [
-          "kernel-side-code-developer",
-          "host-side-code-developer",
-          "onnx-plugin-developer",
+          "agents/kernel-side-code-developer",
+          "agents/host-side-code-developer",
+          "agents/onnx-plugin-developer",
           {"source": "skills/ascend-c-integrated-development", "target": "skills/ascend-c-integrated-development"}
         ]
       }
@@ -173,10 +175,10 @@ opencode-extension-manager/
         "visible": true,
         "description": "C++逻辑缺陷检测",
         "depends": [
-          "cpp-memory-reviewer",
-          "cpp-concurrency-reviewer",
-          "cpp-logic-reviewer",
-          "cpp-bug-scorer",
+          "agents/cpp-memory-reviewer",
+          "agents/cpp-concurrency-reviewer",
+          "agents/cpp-logic-reviewer",
+          "agents/cpp-bug-scorer",
           {"source": "commands/cpp-code-review.md", "target": "commands/cpp-code-review.md"}
         ]
       }
@@ -352,10 +354,26 @@ python3 ext_mgr.py
 ### Q: version 不支持
 
 ```
-错误: 不支持的 version: 2
+错误: 不支持的 version: 3
 ```
 
-**解决**：将 `extensions.json` 中的 `version` 改为 `3`，并按 version 3 的嵌套分类格式更新扩展配置（扩展放在 `skills`/`agents`/`commands`/`plugins` 分类组下，移除 `type` 字段）。
+**解决**：将 `extensions.json` 中的 `version` 改为 `4`，并按 version 4 的格式更新扩展配置：扩展放在 `skills`/`agents`/`commands`/`plugins` 分类组下（移除 `type` 字段），扩展依赖（`depends` 中的字符串）须为 `分类/名称` 格式（如 `"agents/foo"`）。
+
+### Q: 扩展依赖格式错误
+
+```
+扩展 'xxx' 的扩展依赖 'foo' 格式错误，应为 '分类/名称'（如 agents/foo）
+```
+
+**解决**：`depends` 中的扩展依赖字符串必须带分类前缀，且分类须与目标扩展实际所属分组一致。例如目标扩展 `foo` 在 `agents` 组下，则写作 `"agents/foo"`。
+
+### Q: 扩展依赖分类不匹配
+
+```
+扩展 'xxx' 的依赖 'skills/foo' 分类不匹配，'foo' 实际属于 'agents'
+```
+
+**解决**：依赖前缀声明的分类与目标扩展实际所在分组不一致。按提示将前缀改为目标扩展真正所属的分类。
 
 ### Q: 扩展键名格式错误
 
@@ -363,7 +381,7 @@ python3 ext_mgr.py
 扩展键名 'skills/xxx' 格式错误，应为纯名称（不含 /）
 ```
 
-**解决**：将键名改为纯名称（如 `"brainstorming"`），类型通过所属分类组指定。
+**解决**：扩展的**键名**（分类组下的键）须为纯名称（如 `"brainstorming"`），类型通过所属分类组指定。`分类/名称` 前缀仅用于 `depends` 中的扩展依赖，不可用于键名。
 
 ### Q: 未知的扩展分类
 

@@ -130,7 +130,14 @@ class ConfigManager:
                 continue
             ext_data = {"enabled": ext.enabled, "visible": ext.visible}
             ext_data["description"] = ext.description
-            deps = list(ext.ext_deps) + [
+            dep_strs = []
+            for dep_name in ext.ext_deps:
+                dep_ext = config.extensions.get(dep_name)
+                if dep_ext is not None and dep_ext.type in TYPE_TO_GROUP:
+                    dep_strs.append(f"{TYPE_TO_GROUP[dep_ext.type]}/{dep_name}")
+                else:
+                    dep_strs.append(dep_name)
+            deps = dep_strs + [
                 {"source": p.source, "target": p.target} for p in ext.path_deps
             ]
             if deps:
@@ -161,7 +168,8 @@ class ConfigManager:
                 continue
             ext_type = GROUP_TO_TYPE[group]
             for name, attrs in exts_in_group.items():
-                ext_deps, path_deps = parse_depends(attrs.get("depends", []))
+                raw_ext_deps, path_deps = parse_depends(attrs.get("depends", []))
+                ext_deps = [d.split("/", 1)[1] for d in raw_ext_deps]
                 flat[name] = Extension(
                     name=name,
                     type=ext_type,
@@ -179,7 +187,7 @@ class ConfigManager:
 
         if "version" not in raw:
             raise ConfigError("缺少 version 字段")
-        if raw["version"] != 3:
+        if raw["version"] != 4:
             raise ConfigError(f"不支持的 version: {raw['version']}")
         if "extensions" not in raw:
             raise ConfigError("缺少 extensions 字段")
@@ -197,6 +205,7 @@ class ConfigManager:
             raise ConfigError("; ".join(errors))
 
         all_names = set()
+        name_to_group = {}
         for group, exts_in_group in raw_groups.items():
             if not isinstance(exts_in_group, dict):
                 errors.append(f"分类 '{group}' 必须为对象")
@@ -209,6 +218,7 @@ class ConfigManager:
                     errors.append(f"扩展名 '{name}' 在多个分类中重复")
                     continue
                 all_names.add(name)
+                name_to_group[name] = group
         if errors:
             raise ConfigError("; ".join(errors))
 
@@ -235,10 +245,32 @@ class ConfigManager:
                     if isinstance(dep, str):
                         if not dep:
                             errors.append(f"扩展 '{name}' 的扩展依赖名称不能为空")
-                        elif "/" in dep or ".." in dep or dep.startswith("/"):
-                            errors.append(f"扩展 '{name}' 的扩展依赖 '{dep}' 格式错误")
-                        elif dep not in all_names:
-                            warnings.append(f"扩展 '{name}' 的依赖 '{dep}' 不存在")
+                            continue
+                        if dep.count("/") != 1 or dep.startswith("/") or dep.endswith("/"):
+                            errors.append(
+                                f"扩展 '{name}' 的扩展依赖 '{dep}' 格式错误，"
+                                f"应为 '分类/名称'（如 agents/foo）"
+                            )
+                            continue
+                        dep_group, dep_name = dep.split("/", 1)
+                        if dep_group not in GROUP_TO_TYPE:
+                            errors.append(
+                                f"扩展 '{name}' 的扩展依赖 '{dep}' 分类 '{dep_group}' 不合法，"
+                                f"必须为 {', '.join(GROUP_TO_TYPE.keys())}"
+                            )
+                            continue
+                        if ".." in dep_name:
+                            errors.append(f"扩展 '{name}' 的扩展依赖 '{dep}' 名称包含非法字符 '..'")
+                            continue
+                        if dep_name not in all_names:
+                            errors.append(f"扩展 '{name}' 的依赖 '{dep}' 不存在")
+                            continue
+                        actual_group = name_to_group.get(dep_name)
+                        if actual_group != dep_group:
+                            errors.append(
+                                f"扩展 '{name}' 的依赖 '{dep}' 分类不匹配，"
+                                f"'{dep_name}' 实际属于 '{actual_group}'"
+                            )
                     elif isinstance(dep, dict):
                         if "source" not in dep or "target" not in dep:
                             errors.append(
