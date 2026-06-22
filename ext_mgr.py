@@ -934,7 +934,7 @@ class DialogUI:
 
     def show_installing_progress(self, pkg_dir):
         self._adapter.run_infobox(
-            f"正在安装插件依赖，请稍候...\n目录: {pkg_dir}"
+            f"正在安装插件依赖，请稍候...\n安装目录: {pkg_dir}"
         )
 
 
