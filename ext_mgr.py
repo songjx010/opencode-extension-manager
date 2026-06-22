@@ -218,6 +218,8 @@ class ConfigManager:
                     continue
                 if "enabled" not in attrs:
                     errors.append(f"扩展 '{name}' 缺少 enabled 字段")
+                if "visible" not in attrs:
+                    errors.append(f"扩展 '{name}' 缺少 visible 字段")
                 if "description" not in attrs:
                     errors.append(f"扩展 '{name}' 缺少 description 字段")
                 vis = attrs.get("visible")

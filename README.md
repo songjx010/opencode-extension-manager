@@ -88,7 +88,7 @@ opencode-extension-manager/
 | `extensions.commands` | object | 否 | 命令编排扩展组 |
 | `extensions.plugins` | object | 否 | 插件扩展组 |
 | `enabled` | boolean | 是 | 初始启用状态 |
-| `visible` | boolean | 否 | 是否在 TUI 管理界面显示此扩展，默认 `true`。设为 `false` 的扩展仅作为其他扩展的依赖被自动管理，不出现在勾选列表中。保存时无论取值均会写回配置文件 |
+| `visible` | boolean | 是 | 是否在 TUI 管理界面显示此扩展。设为 `false` 的扩展仅作为其他扩展的依赖被自动管理，不出现在勾选列表中。保存时无论取值均会写回配置文件 |
 | `description` | string | 是 | 扩展描述（在 TUI 中显示） |
 | `depends` | array | 否 | 依赖列表，支持扩展依赖（字符串）和路径依赖（对象）混合 |
 
@@ -389,13 +389,13 @@ python3 ext_mgr.py
 
 **解决**：修改 `extensions.json` 中的 `depends` 字段，消除循环引用。
 
-### Q: 缺少 enabled / description 字段
+### Q: 缺少 enabled / visible / description 字段
 
 ```
 扩展 'xxx' 缺少 enabled 字段
 ```
 
-**解决**：为该扩展添加 `"enabled"` 和 `"description"` 字段。
+**解决**：`enabled`、`visible`、`description` 均为必填字段，为该扩展补齐缺少的字段。
 
 ### Q: visible 字段类型错误
 
@@ -403,7 +403,7 @@ python3 ext_mgr.py
 扩展 'xxx' 的 visible 必须为布尔值
 ```
 
-**解决**：`visible` 字段只能为 `true` 或 `false`，或不填（默认 `true`）。
+**解决**：`visible` 字段只能为 `true` 或 `false`。
 
 ### Q: 路径依赖缺少字段
 

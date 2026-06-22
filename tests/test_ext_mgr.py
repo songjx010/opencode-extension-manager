@@ -80,6 +80,7 @@ def _valid_config():
             "skills": {
                 "brainstorming": {
                     "enabled": True,
+                    "visible": True,
                     "description": "头脑风暴",
                     "depends": [
                         {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
@@ -89,6 +90,7 @@ def _valid_config():
             "agents": {
                 "kernel-dev": {
                     "enabled": False,
+                    "visible": True,
                     "description": "Kernel开发",
                     "depends": [
                         "brainstorming",
@@ -158,6 +160,7 @@ def test_validate_missing_groups_ok(tmp_path):
             "skills": {
                 "brainstorming": {
                     "enabled": True,
+                    "visible": True,
                     "description": "头脑风暴",
                 }
             }
@@ -168,11 +171,19 @@ def test_validate_missing_groups_ok(tmp_path):
     assert config.extensions["brainstorming"].type == "skill"
 
 
-def test_validate_visible_defaults_true(tmp_path):
+def test_validate_visible_present_ok(tmp_path):
     cfg = _valid_config()
     p = _write_config(tmp_path, cfg)
     config = ConfigManager(p).load()
     assert config.extensions["brainstorming"].visible is True
+
+
+def test_validate_visible_missing_rejected(tmp_path):
+    cfg = _valid_config()
+    del cfg["extensions"]["skills"]["brainstorming"]["visible"]
+    p = _write_config(tmp_path, cfg)
+    with pytest.raises(ConfigError, match="缺少 visible 字段"):
+        ConfigManager(p).load()
 
 
 def test_validate_visible_false_ok(tmp_path):
@@ -230,6 +241,7 @@ def test_save_preserves_key_order(tmp_path):
             "skills": {
                 "visible-default": {
                     "enabled": True,
+                    "visible": True,
                     "description": "D",
                     "depends": [{"source": "a.md", "target": "a.md"}],
                 },
@@ -343,6 +355,7 @@ def test_simple_cycle(tmp_path):
             "skills": {
                 "a": {
                     "enabled": True,
+                    "visible": True,
                     "description": "A",
                     "depends": ["b"],
                 },
@@ -350,6 +363,7 @@ def test_simple_cycle(tmp_path):
             "agents": {
                 "b": {
                     "enabled": True,
+                    "visible": True,
                     "description": "B",
                     "depends": ["a"],
                 },
@@ -368,6 +382,7 @@ def test_three_node_cycle(tmp_path):
             "skills": {
                 "a": {
                     "enabled": True,
+                    "visible": True,
                     "description": "A",
                     "depends": ["b"],
                 },
@@ -375,6 +390,7 @@ def test_three_node_cycle(tmp_path):
             "agents": {
                 "b": {
                     "enabled": True,
+                    "visible": True,
                     "description": "B",
                     "depends": ["c"],
                 },
@@ -382,6 +398,7 @@ def test_three_node_cycle(tmp_path):
             "commands": {
                 "c": {
                     "enabled": True,
+                    "visible": True,
                     "description": "C",
                     "depends": [
                         "a",
@@ -403,6 +420,7 @@ def test_cycle_with_path_deps_no_false_positive(tmp_path):
             "skills": {
                 "a": {
                     "enabled": True,
+                    "visible": True,
                     "description": "A",
                     "depends": [
                         {"source": "a.md", "target": "a.md"},
@@ -412,6 +430,7 @@ def test_cycle_with_path_deps_no_false_positive(tmp_path):
             "agents": {
                 "b": {
                     "enabled": True,
+                    "visible": True,
                     "description": "B",
                     "depends": [
                         "a",
