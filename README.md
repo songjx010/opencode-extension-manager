@@ -282,7 +282,7 @@ python3 ext_mgr.py
 
 ### 插件依赖安装
 
-使能 `plugin` 类型的扩展后，系统会检查其 `depends` 中每个路径依赖项的 `source` 所在目录（`source` 为目录取自身，为文件取其所在目录）。若该目录含 `package.json`，则在其中执行 `npm install` 安装依赖。
+使能 `plugin` 类型的扩展后，系统会检查其 `depends` 中每个路径依赖项的 `source` 所在目录（`source` 为目录取自身，为文件取其所在目录）。若该目录含 `package.json`，则在其中执行 `npm install` 安装依赖；若不含，则依次向上查找父目录、祖父目录，在首个含 `package.json` 的目录执行安装。
 
 - 同一目录只安装一次（多个 `source` 指向同一目录时自动去重）
 - 仅 `plugin` 类型触发；其他类型即使存在 `package.json` 也不执行
