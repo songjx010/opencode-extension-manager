@@ -1863,6 +1863,46 @@ def test_show_installing_progress_calls_infobox():
     assert "/some/pkg/dir" in args[0]
 
 
+def test_npm_install_finds_package_json_in_parent_dir(tmp_path):
+    # source 直接所在目录无 package.json，父目录有 -> 在父目录安装
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    (project_root / "package.json").write_text("{}")
+    dist_dir = project_root / "dist"
+    dist_dir.mkdir()
+    (dist_dir / "index.js").write_text("// plugin")
+    exts = make_extensions({
+        "p": {"type": "plugin", "enabled": False,
+              "path_deps": [(str(dist_dir / "index.js"), "plugins/p.js")]},
+    })
+    mgr = NpmDependencyManager(str(tmp_path))
+    fake = MagicMock(returncode=0, stderr="", stdout="")
+    with patch("ext_mgr.subprocess.run", return_value=fake) as mock_run, \
+         patch("ext_mgr.shutil.which", return_value="/usr/bin/npm"):
+        mgr.install_for(["p"], exts)
+    assert mock_run.call_args.kwargs["cwd"] == str(project_root)
+
+
+def test_npm_install_finds_package_json_in_grandparent_dir(tmp_path):
+    # source 在 project/a/b/index.js，package.json 在 project（祖父目录）
+    project_root = tmp_path / "projroot"
+    project_root.mkdir()
+    (project_root / "package.json").write_text("{}")
+    sub = project_root / "a" / "b"
+    sub.mkdir(parents=True)
+    (sub / "index.js").write_text("// plugin")
+    exts = make_extensions({
+        "p": {"type": "plugin", "enabled": False,
+              "path_deps": [(str(sub / "index.js"), "plugins/p.js")]},
+    })
+    mgr = NpmDependencyManager(str(tmp_path))
+    fake = MagicMock(returncode=0, stderr="", stdout="")
+    with patch("ext_mgr.subprocess.run", return_value=fake) as mock_run, \
+         patch("ext_mgr.shutil.which", return_value="/usr/bin/npm"):
+        mgr.install_for(["p"], exts)
+    assert mock_run.call_args.kwargs["cwd"] == str(project_root)
+
+
 def test_npm_install_invokes_progress_callback_per_dir(tmp_path):
     d1 = tmp_path / "p1"
     d1.mkdir()

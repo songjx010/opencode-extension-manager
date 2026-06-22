@@ -614,11 +614,18 @@ class NpmDependencyManager:
         return seen
 
     def _resolve_pkg_dir(self, source):
-        """source 为目录取自身，为文件取 dirname；无 package.json 返回 None。"""
+        """定位 package.json 所在目录：从 source 起始目录起，依次向上查找
+        起始目录、父目录、祖父目录（共 3 个候选），返回首个含 package.json
+        的目录；均无则返回 None。"""
         abs_source = os.path.normpath(os.path.join(self._source_dir, source))
-        pkg_dir = abs_source if os.path.isdir(abs_source) else os.path.dirname(abs_source)
-        if os.path.isfile(os.path.join(pkg_dir, "package.json")):
-            return pkg_dir
+        cur = abs_source if os.path.isdir(abs_source) else os.path.dirname(abs_source)
+        for _ in range(3):
+            if os.path.isfile(os.path.join(cur, "package.json")):
+                return cur
+            parent = os.path.dirname(cur)
+            if parent == cur:
+                break
+            cur = parent
         return None
 
     def _display_path(self, pkg_dir):
