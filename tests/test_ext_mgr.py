@@ -1810,10 +1810,31 @@ def test_show_installing_progress_calls_infobox():
     adapter = MagicMock()
     store = ExtensionStore({}, source_dir="/fake")
     ui = DialogUI(adapter, store, MagicMock())
-    ui.show_installing_progress()
+    ui.show_installing_progress("/some/pkg/dir")
     adapter.run_infobox.assert_called_once()
     args, _ = adapter.run_infobox.call_args
     assert "安装" in args[0] and "依赖" in args[0]
+    assert "/some/pkg/dir" in args[0]
+
+
+def test_npm_install_invokes_progress_callback_per_dir(tmp_path):
+    d1 = tmp_path / "p1"
+    d1.mkdir()
+    (d1 / "package.json").write_text("{}")
+    d2 = tmp_path / "p2"
+    d2.mkdir()
+    (d2 / "package.json").write_text("{}")
+    exts = make_extensions({
+        "p1": {"type": "plugin", "enabled": False, "path_deps": [(str(d1), "a")]},
+        "p2": {"type": "plugin", "enabled": False, "path_deps": [(str(d2), "b")]},
+    })
+    mgr = NpmDependencyManager(str(tmp_path))
+    fake = MagicMock(returncode=0, stderr="", stdout="")
+    seen = []
+    with patch("ext_mgr.subprocess.run", return_value=fake), \
+         patch("ext_mgr.shutil.which", return_value="/usr/bin/npm"):
+        mgr.install_for(["p1", "p2"], exts, on_progress=seen.append)
+    assert seen == [str(d1), str(d2)]
 
 
 def test_run_infobox_builds_dialog_args(tmp_path):

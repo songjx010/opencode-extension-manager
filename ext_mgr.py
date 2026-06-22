@@ -529,9 +529,10 @@ class NpmDependencyManager:
     def __init__(self, source_dir: str):
         self._source_dir = os.path.abspath(source_dir)
 
-    def install_for(self, to_enable, extensions):
+    def install_for(self, to_enable, extensions, on_progress=None):
         """对 to_enable 中的 plugin 扩展，定位 source 目录下的 package.json，
-        在该目录执行 npm install。返回 [{name, status, detail}] 结果列表。"""
+        在该目录执行 npm install。返回 [{name, status, detail}] 结果列表。
+        on_progress(pkg_dir) 在每个目录开始安装前被调用（用于 UI 进度提示）。"""
         install_dirs = self._collect_install_dirs(to_enable, extensions)
         if not install_dirs:
             return []
@@ -543,6 +544,8 @@ class NpmDependencyManager:
                 results.append({"name": disp, "status": Status.ERROR,
                                 "detail": "npm 未安装，跳过依赖安装"})
                 continue
+            if on_progress is not None:
+                on_progress(pkg_dir)
             try:
                 proc = subprocess.run(
                     ["npm", "install"], cwd=pkg_dir,
@@ -929,8 +932,10 @@ class DialogUI:
     def show_error(self, message):
         self._adapter.run_msgbox("错误", message)
 
-    def show_installing_progress(self):
-        self._adapter.run_infobox("正在安装插件依赖，请稍候...")
+    def show_installing_progress(self, pkg_dir):
+        self._adapter.run_infobox(
+            f"正在安装插件依赖，请稍候...\n目录: {pkg_dir}"
+        )
 
 
 def main():
@@ -988,8 +993,10 @@ def main():
             for n in changes.to_enable if n in store.extensions
         )
         if has_plugin:
-            ui.show_installing_progress()
-            results += npm_mgr.install_for(changes.to_enable, store.extensions)
+            results += npm_mgr.install_for(
+                changes.to_enable, store.extensions,
+                on_progress=lambda d: ui.show_installing_progress(d),
+            )
         ui.show_results(results)
 
         try:
