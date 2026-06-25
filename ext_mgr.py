@@ -104,12 +104,12 @@ class ConfigManager:
 
     def load(self) -> Config:
         if not os.path.isfile(self._config_path):
-            raise ConfigError(f"配置文件 {self._config_path} 不存在")
+            raise ConfigError(f"Config file {self._config_path} does not exist")
         try:
             with open(self._config_path, "r", encoding="utf-8") as f:
                 raw = json.load(f)
         except json.JSONDecodeError as e:
-            raise ConfigError(f"JSON 解析失败: {e}")
+            raise ConfigError(f"JSON parsing failed: {e}")
 
         warnings = self._validate(raw)
         extensions = self._build_extensions(raw["extensions"])
@@ -186,20 +186,20 @@ class ConfigManager:
         warnings = []
 
         if "version" not in raw:
-            raise ConfigError("缺少 version 字段")
+            raise ConfigError("Missing 'version' field")
         if raw["version"] != 4:
-            raise ConfigError(f"不支持的 version: {raw['version']}")
+            raise ConfigError(f"Unsupported version: {raw['version']}")
         if "extensions" not in raw:
-            raise ConfigError("缺少 extensions 字段")
+            raise ConfigError("Missing 'extensions' field")
         if not isinstance(raw["extensions"], dict):
-            raise ConfigError("extensions 必须为对象")
+            raise ConfigError("'extensions' must be an object")
 
         raw_groups = raw["extensions"]
         for group in raw_groups:
             if group not in GROUP_TO_TYPE:
                 errors.append(
-                    f"未知的扩展分类 '{group}'，"
-                    f"必须为 {', '.join(GROUP_TO_TYPE.keys())}"
+                    f"Unknown extension category '{group}', "
+                    f"must be one of {', '.join(GROUP_TO_TYPE.keys())}"
                 )
         if errors:
             raise ConfigError("; ".join(errors))
@@ -208,14 +208,14 @@ class ConfigManager:
         name_to_group = {}
         for group, exts_in_group in raw_groups.items():
             if not isinstance(exts_in_group, dict):
-                errors.append(f"分类 '{group}' 必须为对象")
+                errors.append(f"Category '{group}' must be an object")
                 continue
             for name, attrs in exts_in_group.items():
                 if not isinstance(attrs, dict):
-                    errors.append(f"扩展 '{name}' 必须为对象")
+                    errors.append(f"Extension '{name}' must be an object")
                     continue
                 if name in all_names:
-                    errors.append(f"扩展名 '{name}' 在多个分类中重复")
+                    errors.append(f"Extension name '{name}' is duplicated across multiple categories")
                     continue
                 all_names.add(name)
                 name_to_group[name] = group
@@ -227,58 +227,58 @@ class ConfigManager:
                 if not isinstance(attrs, dict):
                     continue
                 if "enabled" not in attrs:
-                    errors.append(f"扩展 '{name}' 缺少 enabled 字段")
+                    errors.append(f"Extension '{name}' missing 'enabled' field")
                 if "visible" not in attrs:
-                    errors.append(f"扩展 '{name}' 缺少 visible 字段")
+                    errors.append(f"Extension '{name}' missing 'visible' field")
                 if "description" not in attrs:
-                    errors.append(f"扩展 '{name}' 缺少 description 字段")
+                    errors.append(f"Extension '{name}' missing 'description' field")
                 vis = attrs.get("visible")
                 if vis is not None and not isinstance(vis, bool):
-                    errors.append(f"扩展 '{name}' 的 visible 必须为布尔值")
+                    errors.append(f"Extension '{name}': 'visible' must be a boolean")
                 if "/" in name:
-                    errors.append(f"扩展键名 '{name}' 格式错误，应为纯名称（不含 /）")
+                    errors.append(f"Extension key '{name}' has invalid format, expected a plain name (without '/')")
                 if ".." in name:
-                    errors.append(f"扩展名称 '{name}' 包含非法字符 '..'")
+                    errors.append(f"Extension name '{name}' contains illegal characters '..'")
                 if name.startswith("/"):
-                    errors.append(f"扩展名称 '{name}' 包含非法字符（绝对路径）")
+                    errors.append(f"Extension name '{name}' contains illegal characters (absolute path)")
                 for dep in attrs.get("depends", []):
                     if isinstance(dep, str):
                         if not dep:
-                            errors.append(f"扩展 '{name}' 的扩展依赖名称不能为空")
+                            errors.append(f"Extension '{name}' has an empty dependency name")
                             continue
                         if dep.count("/") != 1 or dep.startswith("/") or dep.endswith("/"):
                             errors.append(
-                                f"扩展 '{name}' 的扩展依赖 '{dep}' 格式错误，"
-                                f"应为 '分类/名称'（如 agents/foo）"
+                                f"Extension '{name}' dependency '{dep}' has invalid format, "
+                                f"expected 'category/name' (e.g. agents/foo)"
                             )
                             continue
                         dep_group, dep_name = dep.split("/", 1)
                         if dep_group not in GROUP_TO_TYPE:
                             errors.append(
-                                f"扩展 '{name}' 的扩展依赖 '{dep}' 分类 '{dep_group}' 不合法，"
-                                f"必须为 {', '.join(GROUP_TO_TYPE.keys())}"
+                                f"Extension '{name}' dependency '{dep}' has invalid category '{dep_group}', "
+                                f"must be one of {', '.join(GROUP_TO_TYPE.keys())}"
                             )
                             continue
                         if ".." in dep_name:
-                            errors.append(f"扩展 '{name}' 的扩展依赖 '{dep}' 名称包含非法字符 '..'")
+                            errors.append(f"Extension '{name}' dependency '{dep}' name contains illegal characters '..'")
                             continue
                         if dep_name not in all_names:
-                            errors.append(f"扩展 '{name}' 的依赖 '{dep}' 不存在")
+                            errors.append(f"Extension '{name}' dependency '{dep}' does not exist")
                             continue
                         actual_group = name_to_group.get(dep_name)
                         if actual_group != dep_group:
                             errors.append(
-                                f"扩展 '{name}' 的依赖 '{dep}' 分类不匹配，"
-                                f"'{dep_name}' 实际属于 '{actual_group}'"
+                                f"Extension '{name}' dependency '{dep}' category mismatch, "
+                                f"'{dep_name}' actually belongs to '{actual_group}'"
                             )
                     elif isinstance(dep, dict):
                         if "source" not in dep or "target" not in dep:
                             errors.append(
-                                f"扩展 '{name}' 的路径依赖缺少 source 或 target 字段"
+                                f"Extension '{name}' path dependency missing 'source' or 'target' field"
                             )
                     else:
                         errors.append(
-                            f"扩展 '{name}' 的依赖类型不合法: {type(dep).__name__}"
+                            f"Extension '{name}' has invalid dependency type: {type(dep).__name__}"
                         )
         if errors:
             raise ConfigError("; ".join(errors))
@@ -298,7 +298,7 @@ class ConfigManager:
                 if color[dep] == GRAY:
                     cycle_start = path.index(dep)
                     cycle = path[cycle_start:] + [dep]
-                    raise ConfigError(f"循环依赖: {' → '.join(cycle)}")
+                    raise ConfigError(f"Circular dependency: {' → '.join(cycle)}")
                 if color[dep] == WHITE:
                     dfs(dep, path)
             path.pop()
@@ -443,7 +443,7 @@ class ExtensionStore:
             if enabled_dependents:
                 rejected.append({
                     "name": name,
-                    "reason": "被依赖",
+                    "reason": "required by others",
                     "dependents": enabled_dependents,
                 })
         actual_disable = to_disable_all - {r["name"] for r in rejected}
@@ -510,7 +510,7 @@ class SymlinkManager:
                 results.append(self._remove_symlink(dep.source, dep.target))
         if not path_deps:
             results.append(
-                {"name": ext_name, "status": Status.SKIPPED, "detail": "无路径依赖"}
+                {"name": ext_name, "status": Status.SKIPPED, "detail": "no path dependencies"}
             )
         return results
 
@@ -523,10 +523,10 @@ class SymlinkManager:
             if os.path.abspath(existing) == os.path.abspath(source):
                 return {"name": target_rel, "status": Status.SKIPPED, "detail": ""}
             return {"name": target_rel, "status": Status.CONFLICT,
-                    "detail": f"符号链接已指向 {existing}"}
+                    "detail": f"symlink already points to {existing}"}
         if os.path.exists(target):
             return {"name": target_rel, "status": Status.CONFLICT,
-                    "detail": f"目标路径 {target} 已存在"}
+                    "detail": f"target path {target} already exists"}
         try:
             os.symlink(source, target)
             return {"name": target_rel, "status": Status.SUCCESS, "detail": ""}
@@ -540,11 +540,11 @@ class SymlinkManager:
             if not os.path.exists(target):
                 return {"name": target_rel, "status": Status.SKIPPED, "detail": ""}
             return {"name": target_rel, "status": Status.CONFLICT,
-                    "detail": f"目标路径 {target} 存在但非符号链接"}
+                    "detail": f"target path {target} exists but is not a symlink"}
         existing = os.readlink(target)
         if os.path.abspath(existing) != os.path.abspath(source):
             return {"name": target_rel, "status": Status.CONFLICT,
-                    "detail": f"符号链接指向 {existing}，非预期目标"}
+                    "detail": f"symlink points to {existing}, not the expected target"}
         try:
             os.unlink(target)
             return {"name": target_rel, "status": Status.SUCCESS, "detail": ""}
@@ -576,7 +576,7 @@ class NpmDependencyManager:
             disp = self._display_path(pkg_dir)
             if not npm_available:
                 results.append({"name": disp, "status": Status.ERROR,
-                                "detail": "npm 未安装，跳过依赖安装"})
+                                "detail": "npm not installed, skipping dependency installation"})
                 continue
             if on_progress is not None:
                 on_progress(pkg_dir)
@@ -594,7 +594,7 @@ class NpmDependencyManager:
                                     "detail": (proc.stderr or "")[-500:]})
             except subprocess.TimeoutExpired:
                 results.append({"name": disp, "status": Status.ERROR,
-                                "detail": "npm install 超时"})
+                                "detail": "npm install timed out"})
         return results
 
     def _collect_install_dirs(self, to_enable, extensions):
@@ -650,7 +650,7 @@ class Validator:
             for name, ext in extensions.items():
                 if ext.enabled and ext.path_deps:
                     results.append({"name": name, "status": Status.MISSING,
-                                    "detail": "目标目录不存在"})
+                                    "detail": "target directory does not exist"})
             return results
 
         for name, ext in extensions.items():
@@ -661,23 +661,23 @@ class Validator:
                     if not os.path.islink(target):
                         results.append({"name": f"{name}:{dep.target}",
                                         "status": Status.MISSING,
-                                        "detail": "符号链接缺失"})
+                                        "detail": "symlink missing"})
                     else:
                         actual = os.readlink(target)
                         if os.path.abspath(actual) != os.path.abspath(source):
                             results.append({"name": f"{name}:{dep.target}",
                                             "status": Status.BROKEN,
-                                            "detail": f"指向错误目标: {actual}"})
+                                            "detail": f"points to wrong target: {actual}"})
             else:
                 for dep in ext.path_deps:
                     target = os.path.join(self._target_dir, dep.target)
                     if os.path.islink(target):
                         results.append({"name": f"{name}:{dep.target}",
                                         "status": Status.UNEXPECTED,
-                                        "detail": "已禁用但符号链接仍存在"})
+                                        "detail": "disabled but symlink still exists"})
 
         if not results:
-            results.append({"name": "", "status": Status.OK, "detail": "所有扩展状态正常"})
+            results.append({"name": "", "status": Status.OK, "detail": "All extensions are in good state"})
         return results
 
 
@@ -794,10 +794,10 @@ class DialogAdapter:
 
 class DialogUI:
     TYPES_LABELS = {
-        "skill": "Skills  — 技能扩展",
-        "agent": "Agents — 智能体",
-        "command": "Commands — 命令编排",
-        "plugin": "Plugins — 插件扩展",
+        "skill": "Skills",
+        "agent": "Agents",
+        "command": "Commands",
+        "plugin": "Plugins",
     }
     TYPES_ORDER = ["skill", "agent", "command", "plugin"]
 
@@ -816,13 +816,13 @@ class DialogUI:
 
     def ask_target_dir(self):
         while True:
-            code, value = self._adapter.run_inputbox("目标目录", self._target_dir)
+            code, value = self._adapter.run_inputbox("Target Directory", self._target_dir)
             if code != 0:
                 return "cancel"
             if value.strip():
                 self._target_dir = value.strip()
                 return self._target_dir
-            self._adapter.run_msgbox("错误", "目标目录不能为空")
+            self._adapter.run_msgbox("Error", "Target directory cannot be empty")
 
     def _build_checklist_items(self, ext_type):
         items = []
@@ -834,7 +834,7 @@ class DialogUI:
             if missing:
                 unavailable.add(ext.name)
                 mark = Format.WARN_MARK
-                help_text = "缺失依赖: " + ", ".join(missing)
+                help_text = "Missing dependencies: " + ", ".join(missing)
             else:
                 mark = Format.OK_MARK
                 help_text = ext.description
@@ -870,13 +870,13 @@ class DialogUI:
                 if total == 0:
                     continue
                 label = self._pad_label(self.TYPES_LABELS.get(t, t), max_label_w)
-                stats = (f"\t{Format.BOLD}{Format.RED}{enabled}/{total} 启用{Format.RESET}"
-                         f"\t{Format.BOLD}{Format.MAGENTA}{ok}/{total} 可用{Format.RESET}")
+                stats = (f"\t{Format.BOLD}{Format.RED}{enabled}/{total} enabled{Format.RESET}"
+                         f"\t{Format.BOLD}{Format.MAGENTA}{ok}/{total} available{Format.RESET}")
                 menu_items.append((t, label + stats))
-            menu_items.append(("apply", f"{Format.BOLD}{Format.GREEN}确认并应用变更{Format.RESET}"))
-            menu_items.append(("quit", "退出"))
+            menu_items.append(("apply", f"{Format.BOLD}{Format.GREEN}Confirm and apply changes{Format.RESET}"))
+            menu_items.append(("quit", "Quit"))
 
-            code, choice = self._adapter.run_menu("扩展管理", menu_items)
+            code, choice = self._adapter.run_menu("Extension Management", menu_items)
             if code != 0 or choice == "quit":
                 return "cancel", []
             if choice == "apply":
@@ -889,20 +889,20 @@ class DialogUI:
     def _show_type_checklist(self, ext_type):
         items, unavailable = self._build_checklist_items(ext_type)
         if not items:
-            self._adapter.run_msgbox("提示", "该分类下没有扩展")
+            self._adapter.run_msgbox("Info", "No extensions in this category")
             return "back"
         while True:
             label = self.TYPES_LABELS.get(ext_type, ext_type)
-            title = f"{label}  (OK=齐全  !!=缺失,不可选)"
+            title = f"{label}  (OK=intact  !=missing, unselectable)"
             code, selected, invalid = self._adapter.run_checklist(title, items, unavailable)
             if code != 0:
                 return "back"
             if invalid:
                 self._adapter.run_msgbox(
-                    "错误",
-                    "以下扩展文件不完整，无法启用:\n\n"
+                    "Error",
+                    "The following extensions are incomplete and cannot be enabled:\n\n"
                     + "\n".join(f"  - {n}" for n in invalid)
-                    + "\n\n请取消勾选后重试",
+                    + "\n\nPlease uncheck them and try again",
                 )
                 continue
 
@@ -921,26 +921,26 @@ class DialogUI:
             return "back"
 
     def show_change_summary(self, changes):
-        lines = [f"{Format.BOLD}{Format.BLUE}变更摘要:{Format.RESET}\n"]
+        lines = [f"{Format.BOLD}{Format.BLUE}Change Summary:{Format.RESET}\n"]
         if changes.to_enable:
-            lines.append(f"{Format.BOLD}{Format.MAGENTA}启用:{Format.RESET}")
+            lines.append(f"{Format.BOLD}{Format.MAGENTA}Enable:{Format.RESET}")
             for n in changes.to_enable:
                 lines.append(f"  + {n}")
         if changes.to_disable:
-            lines.append(f"\n{Format.BOLD}{Format.RED}禁用:{Format.RESET}")
+            lines.append(f"\n{Format.BOLD}{Format.RED}Disable:{Format.RESET}")
             for n in changes.to_disable:
                 lines.append(f"  - {n}")
         if changes.cascade_disabled:
-            lines.append(f"\n{Format.BOLD}{Format.YELLOW}级联禁用:{Format.RESET}")
+            lines.append(f"\n{Format.BOLD}{Format.YELLOW}Cascade disabled:{Format.RESET}")
             for n in changes.cascade_disabled:
                 lines.append(f"  ~ {n}")
         if changes.rejected:
             for r in changes.rejected:
                 lines.append(
-                    f"拒绝禁用 {r['name']}: {r['reason']} "
+                    f"Refused to disable {r['name']}: {r['reason']} "
                     f"({', '.join(r.get('dependents', []))})"
                 )
-        return self._adapter.run_yesno("确认", "\n".join(lines)) == 0
+        return self._adapter.run_yesno("Confirm", "\n".join(lines)) == 0
 
     def show_results(self, results):
         ok_status = {Status.SUCCESS, Status.OK}
@@ -960,7 +960,7 @@ class DialogUI:
             if lines and groups[key]:
                 lines.append("")
             for r in groups[key]:
-                name = (r["name"] or "(全部)").ljust(max_name_w)
+                name = (r["name"] or "(all)").ljust(max_name_w)
                 if r["status"] in ok_status:
                     color = Format.BOLD + Format.BLUE
                 elif r["status"] in skip_status:
@@ -968,14 +968,14 @@ class DialogUI:
                 else:
                     color = Format.BOLD + Format.RED
                 lines.append(f"{name}\t{color}{r['status']}{Format.RESET}")
-        self._adapter.run_msgbox("操作结果", "\n".join(lines))
+        self._adapter.run_msgbox("Results", "\n".join(lines))
 
     def show_error(self, message):
-        self._adapter.run_msgbox("错误", message)
+        self._adapter.run_msgbox("Error", message)
 
     def show_installing_progress(self, pkg_dir):
         self._adapter.run_infobox(
-            f"正在安装插件依赖，请稍候...\n安装目录: {pkg_dir}"
+            f"Installing plugin dependencies, please wait...\nInstall directory: {pkg_dir}"
         )
 
 
@@ -983,14 +983,14 @@ def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
     if not DialogAdapter.check_available():
-        print("错误: dialog 工具未安装，请先安装 dialog", file=sys.stderr)
+        print("Error: the 'dialog' tool is not installed; please install it first", file=sys.stderr)
         sys.exit(1)
 
     config_mgr = ConfigManager(os.path.join(script_dir, "extensions.json"))
     try:
         config = config_mgr.load()
     except ConfigError as e:
-        print(f"错误: {e}", file=sys.stderr)
+        print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
     store = ExtensionStore(config.extensions, source_dir=script_dir)
@@ -1013,13 +1013,13 @@ def main():
         if changes.rejected:
             for r in changes.rejected:
                 ui.show_error(
-                    f"扩展 {r['name']} 被以下已选择扩展依赖: "
+                    f"Extension {r['name']} is required by the following selected extensions: "
                     f"{', '.join(r.get('dependents', []))}"
                 )
             continue
 
         if not changes.to_enable and not changes.to_disable:
-            ui.show_error("无变更")
+            ui.show_error("No changes")
             continue
 
         if not ui.show_change_summary(changes):
@@ -1043,7 +1043,7 @@ def main():
         try:
             config_mgr.save(config)
         except Exception as e:
-            ui.show_error(f"配置文件写入失败: {e}")
+            ui.show_error(f"Failed to write config file: {e}")
 
 
 if __name__ == "__main__":
