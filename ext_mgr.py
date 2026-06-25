@@ -2,6 +2,7 @@
 """opencode 扩展管理器 — 通过 TUI 界面管理扩展符号链接"""
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -9,7 +10,26 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from logging.handlers import RotatingFileHandler
 from typing import Dict, List
+
+log = logging.getLogger("ext_mgr")
+
+
+def setup_logging(log_dir: str) -> None:
+    handler = RotatingFileHandler(
+        os.path.join(log_dir, "ext_mgr.log"),
+        maxBytes=1024 * 1024,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    )
+    logger = logging.getLogger("ext_mgr")
+    logger.setLevel(logging.DEBUG)
+    if not logger.handlers:
+        logger.addHandler(handler)
 
 GROUP_TO_TYPE = {
     "skills": "skill",
@@ -49,14 +69,18 @@ _WIN_DRIVE_RE = re.compile(r'^([A-Za-z]):[\\/](.*)')
 
 
 def resolve_target_dir(path):
-    """Expand ~ and, under non-native-Windows Python (e.g. Git Bash / MSYS2),
-    convert a Windows drive path (C:\\Users\\name) to POSIX format (/C/Users/name)."""
+    """Expand ~ and convert Windows drive paths to POSIX form
+    (e.g. ``C:\\Users\\name/.config/opencode`` -> ``/C/Users/name/.config/opencode``),
+    the form recognized by Git Bash / MSYS2. Conversion is unconditional so the
+    result is consistent regardless of the host Python's os.name.
+    """
     expanded = os.path.expanduser(path)
-    if os.name == 'nt':
-        return expanded
     m = _WIN_DRIVE_RE.match(expanded)
     if m:
-        return "/" + m.group(1).upper() + "/" + m.group(2).replace("\\", "/")
+        result = "/" + m.group(1).upper() + "/" + m.group(2).replace("\\", "/")
+        log.debug("resolve_target_dir(drive): %r -> %r", path, result)
+        return result
+    log.debug("resolve_target_dir: %r -> %r", path, expanded)
     return expanded
 
 
@@ -117,18 +141,24 @@ class ConfigManager:
         self._config_path = config_path
 
     def load(self) -> Config:
+        log.info("Loading config from %s", self._config_path)
         if not os.path.isfile(self._config_path):
+            log.error("Config file does not exist: %s", self._config_path)
             raise ConfigError(f"Config file {self._config_path} does not exist")
         try:
             with open(self._config_path, "r", encoding="utf-8") as f:
                 raw = json.load(f)
         except json.JSONDecodeError as e:
+            log.error("JSON parsing failed for %s: %s", self._config_path, e)
             raise ConfigError(f"JSON parsing failed: {e}")
 
         warnings = self._validate(raw)
         extensions = self._build_extensions(raw["extensions"])
         self._check_circular_deps(extensions)
         extra = {k: v for k, v in raw.items() if k not in ("version", "extensions")}
+        log.info(
+            "Config loaded: version=%s, extensions=%d", raw["version"], len(extensions)
+        )
         return Config(
             version=raw["version"],
             extensions=extensions,
@@ -137,6 +167,7 @@ class ConfigManager:
         )
 
     def save(self, config: Config) -> None:
+        log.info("Saving config to %s", self._config_path)
         nested = {group: {} for group in TYPE_TO_GROUP.values()}
         for name, ext in config.extensions.items():
             group = TYPE_TO_GROUP.get(ext.type)
@@ -170,7 +201,9 @@ class ConfigManager:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(content)
             os.replace(tmp_path, self._config_path)
+            log.info("Config saved successfully")
         except Exception:
+            log.exception("Failed to save config to %s", self._config_path)
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
             raise
@@ -535,16 +568,21 @@ class SymlinkManager:
         if os.path.islink(target):
             existing = os.readlink(target)
             if os.path.abspath(existing) == os.path.abspath(source):
+                log.debug("Symlink exists, skip: %s -> %s", target, source)
                 return {"name": target_rel, "status": Status.SKIPPED, "detail": ""}
+            log.warning("Symlink conflict at %s: already points to %s", target, existing)
             return {"name": target_rel, "status": Status.CONFLICT,
                     "detail": f"symlink already points to {existing}"}
         if os.path.exists(target):
+            log.warning("Symlink conflict at %s: target path already exists", target)
             return {"name": target_rel, "status": Status.CONFLICT,
                     "detail": f"target path {target} already exists"}
         try:
             os.symlink(source, target)
+            log.info("Symlink created: %s -> %s", target, source)
             return {"name": target_rel, "status": Status.SUCCESS, "detail": ""}
         except OSError as e:
+            log.error("Failed to create symlink %s -> %s: %s", target, source, e)
             return {"name": target_rel, "status": Status.ERROR, "detail": str(e)}
 
     def _remove_symlink(self, source_rel, target_rel):
@@ -552,17 +590,24 @@ class SymlinkManager:
         target = os.path.join(self._target_dir, target_rel)
         if not os.path.islink(target):
             if not os.path.exists(target):
+                log.debug("No symlink to remove: %s", target)
                 return {"name": target_rel, "status": Status.SKIPPED, "detail": ""}
+            log.warning("Remove conflict at %s: exists but is not a symlink", target)
             return {"name": target_rel, "status": Status.CONFLICT,
                     "detail": f"target path {target} exists but is not a symlink"}
         existing = os.readlink(target)
         if os.path.abspath(existing) != os.path.abspath(source):
+            log.warning(
+                "Remove conflict at %s: points to %s, not %s", target, existing, source
+            )
             return {"name": target_rel, "status": Status.CONFLICT,
                     "detail": f"symlink points to {existing}, not the expected target"}
         try:
             os.unlink(target)
+            log.info("Symlink removed: %s", target)
             return {"name": target_rel, "status": Status.SUCCESS, "detail": ""}
         except OSError as e:
+            log.error("Failed to remove symlink %s: %s", target, e)
             return {"name": target_rel, "status": Status.ERROR, "detail": str(e)}
 
     def _ensure_subdir(self, dir_path):
@@ -585,6 +630,8 @@ class NpmDependencyManager:
         if not install_dirs:
             return []
         npm_available = shutil.which("npm") is not None
+        if not npm_available:
+            log.warning("npm not found on PATH; dependency installation will be skipped")
         results = []
         for pkg_dir in install_dirs:
             disp = self._display_path(pkg_dir)
@@ -594,6 +641,7 @@ class NpmDependencyManager:
                 continue
             if on_progress is not None:
                 on_progress(pkg_dir)
+            log.info("Running npm install in %s", pkg_dir)
             try:
                 proc = subprocess.run(
                     ["npm", "install"], cwd=pkg_dir,
@@ -601,14 +649,26 @@ class NpmDependencyManager:
                     timeout=self.NPM_INSTALL_TIMEOUT,
                 )
                 if proc.returncode == 0:
+                    log.info("npm install succeeded in %s", pkg_dir)
                     results.append({"name": disp, "status": Status.SUCCESS,
                                     "detail": "npm install"})
                 else:
+                    log.error(
+                        "npm install failed in %s (rc=%d): %s",
+                        pkg_dir, proc.returncode, (proc.stderr or "").strip()[-500:],
+                    )
                     results.append({"name": disp, "status": Status.ERROR,
                                     "detail": (proc.stderr or "")[-500:]})
             except subprocess.TimeoutExpired:
+                log.error(
+                    "npm install timed out in %s after %ds",
+                    pkg_dir, self.NPM_INSTALL_TIMEOUT,
+                )
                 results.append({"name": disp, "status": Status.ERROR,
                                 "detail": "npm install timed out"})
+            except Exception as e:
+                log.exception("Unexpected error during npm install in %s", pkg_dir)
+                results.append({"name": disp, "status": Status.ERROR, "detail": str(e)})
         return results
 
     def _collect_install_dirs(self, to_enable, extensions):
@@ -820,6 +880,7 @@ class DialogUI:
         self._store = store
         self._config = config_manager
         self._target_dir = resolve_target_dir(DEFAULT_TARGET_DIR)
+        log.info("Default target directory: %s", self._target_dir)
 
     @staticmethod
     def _visible_len(s):
@@ -830,17 +891,22 @@ class DialogUI:
 
     def ask_target_dir(self):
         while True:
+            log.info("Showing target directory prompt, displayed: %s", self._target_dir)
             code, value = self._adapter.run_inputbox("Target Directory", self._target_dir)
             if code != 0:
+                log.info("Target directory prompt cancelled")
                 return "cancel"
             if not value.strip():
                 self._adapter.run_msgbox("Error", "Target directory cannot be empty")
                 continue
             resolved = resolve_target_dir(value.strip())
+            log.info("Target directory entered=%r resolved=%r", value.strip(), resolved)
             if not os.path.isdir(resolved):
                 try:
                     os.makedirs(resolved, exist_ok=True)
+                    log.info("Created target directory: %s", resolved)
                 except OSError as e:
+                    log.error("Cannot create target directory %s: %s", resolved, e)
                     self._adapter.run_msgbox("Error", f"Cannot create target directory: {e}")
                     continue
             self._target_dir = resolved
@@ -1003,8 +1069,11 @@ class DialogUI:
 
 def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    setup_logging(script_dir)
+    log.info("=== opencode extension manager starting (dir=%s) ===", script_dir)
 
     if not DialogAdapter.check_available():
+        log.error("'dialog' tool is not installed")
         print("Error: the 'dialog' tool is not installed; please install it first", file=sys.stderr)
         sys.exit(1)
 
@@ -1012,6 +1081,7 @@ def main():
     try:
         config = config_mgr.load()
     except ConfigError as e:
+        log.error("Config load failed: %s", e)
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
@@ -1020,7 +1090,9 @@ def main():
 
     target = ui.ask_target_dir()
     if target == "cancel":
+        log.info("User cancelled at target directory prompt")
         sys.exit(0)
+    log.info("Target directory: %s", target)
 
     symlink_mgr = SymlinkManager(script_dir, target)
     npm_mgr = NpmDependencyManager(script_dir)
@@ -1028,12 +1100,23 @@ def main():
     while True:
         action, selected = ui.show_extension_list()
         if action == "cancel":
+            log.info("User quit without applying changes")
             break
 
+        log.info("Applying selection: %d extension(s) selected", len(selected))
         changes = store.resolve_changes(selected)
+        log.info(
+            "Resolved changes: enable=%d, disable=%d, cascade=%d, rejected=%d",
+            len(changes.to_enable), len(changes.to_disable),
+            len(changes.cascade_disabled), len(changes.rejected),
+        )
 
         if changes.rejected:
             for r in changes.rejected:
+                log.warning(
+                    "Rejected disable of %s (required by %s)",
+                    r["name"], ", ".join(r.get("dependents", [])),
+                )
                 ui.show_error(
                     f"Extension {r['name']} is required by the following selected extensions: "
                     f"{', '.join(r.get('dependents', []))}"
@@ -1041,21 +1124,28 @@ def main():
             continue
 
         if not changes.to_enable and not changes.to_disable:
+            log.info("No changes to apply")
             ui.show_error("No changes")
             continue
 
         if not ui.show_change_summary(changes):
+            log.info("User cancelled at change summary confirmation")
             continue
 
         all_disable = changes.to_disable + changes.cascade_disabled
         results = symlink_mgr.apply_changes(
             changes.to_enable, all_disable, store.extensions
         )
+        failures = [r for r in results if r["status"] == Status.ERROR]
+        log.info(
+            "Symlink apply: %d result(s), %d error(s)", len(results), len(failures)
+        )
         has_plugin = any(
             store.extensions[n].type == "plugin"
             for n in changes.to_enable if n in store.extensions
         )
         if has_plugin:
+            log.info("Plugin(s) enabled; running npm dependency installation")
             results += npm_mgr.install_for(
                 changes.to_enable, store.extensions,
                 on_progress=lambda d: ui.show_installing_progress(d),
@@ -1065,7 +1155,10 @@ def main():
         try:
             config_mgr.save(config)
         except Exception as e:
+            log.exception("Failed to write config file")
             ui.show_error(f"Failed to write config file: {e}")
+
+    log.info("=== opencode extension manager exiting ===")
 
 
 if __name__ == "__main__":

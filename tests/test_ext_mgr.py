@@ -1512,12 +1512,22 @@ def test_resolve_target_dir_msys_win_home_mixed_slash():
         assert resolve_target_dir("~/.config/opencode") == "/C/Users/songj/.config/opencode"
 
 
-def test_resolve_target_dir_native_windows_no_conversion():
-    """On native Windows Python (os.name == 'nt'), keep the Windows path as-is."""
+def test_resolve_target_dir_native_windows_drive_to_posix():
+    """Drive paths convert to POSIX /C/ form regardless of os.name (Git Bash
+    consumes the result), so native Windows Python must convert too."""
     win_path = r"C:\Users\songj\.config\opencode"
     with patch("ext_mgr.os.name", "nt"), \
          patch("ext_mgr.os.path.expanduser", return_value=win_path):
-        assert resolve_target_dir("~/.config/opencode") == win_path
+        assert resolve_target_dir("~/.config/opencode") == "/C/Users/songj/.config/opencode"
+
+
+def test_resolve_target_dir_native_windows_mixed_slash_to_posix():
+    """expanduser('~/.config/opencode') under native Windows yields a mixed-slash
+    path; it must still convert to /C/ form (the reported bug)."""
+    mixed = r"C:\Users\songj/.config/opencode"
+    with patch("ext_mgr.os.name", "nt"), \
+         patch("ext_mgr.os.path.expanduser", return_value=mixed):
+        assert resolve_target_dir("~/.config/opencode") == "/C/Users/songj/.config/opencode"
 
 
 def test_resolve_target_dir_already_posix_drive():
