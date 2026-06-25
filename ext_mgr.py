@@ -45,6 +45,20 @@ class Format:
 
 DEFAULT_TARGET_DIR = "~/.config/opencode"
 
+_WIN_DRIVE_RE = re.compile(r'^([A-Za-z]):[\\/](.*)')
+
+
+def resolve_target_dir(path):
+    """Expand ~ and, under non-native-Windows Python (e.g. Git Bash / MSYS2),
+    convert a Windows drive path (C:\\Users\\name) to POSIX format (/C/Users/name)."""
+    expanded = os.path.expanduser(path)
+    if os.name == 'nt':
+        return expanded
+    m = _WIN_DRIVE_RE.match(expanded)
+    if m:
+        return "/" + m.group(1).upper() + "/" + m.group(2).replace("\\", "/")
+    return expanded
+
 
 def parse_depends(depends_list):
     ext_deps = []
@@ -805,7 +819,7 @@ class DialogUI:
         self._adapter = adapter
         self._store = store
         self._config = config_manager
-        self._target_dir = os.path.expanduser(DEFAULT_TARGET_DIR)
+        self._target_dir = resolve_target_dir(DEFAULT_TARGET_DIR)
 
     @staticmethod
     def _visible_len(s):
@@ -819,10 +833,18 @@ class DialogUI:
             code, value = self._adapter.run_inputbox("Target Directory", self._target_dir)
             if code != 0:
                 return "cancel"
-            if value.strip():
-                self._target_dir = value.strip()
-                return self._target_dir
-            self._adapter.run_msgbox("Error", "Target directory cannot be empty")
+            if not value.strip():
+                self._adapter.run_msgbox("Error", "Target directory cannot be empty")
+                continue
+            resolved = resolve_target_dir(value.strip())
+            if not os.path.isdir(resolved):
+                try:
+                    os.makedirs(resolved, exist_ok=True)
+                except OSError as e:
+                    self._adapter.run_msgbox("Error", f"Cannot create target directory: {e}")
+                    continue
+            self._target_dir = resolved
+            return self._target_dir
 
     def _build_checklist_items(self, ext_type):
         items = []

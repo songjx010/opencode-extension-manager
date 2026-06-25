@@ -20,6 +20,7 @@ from ext_mgr import (
     Format,
     DialogAdapter,
     DEFAULT_TARGET_DIR,
+    resolve_target_dir,
 )
 
 
@@ -116,7 +117,7 @@ def test_validate_version2_rejected(tmp_path):
     cfg = _valid_config()
     cfg["version"] = 2
     p = _write_config(tmp_path, cfg)
-    with pytest.raises(ConfigError, match="不支持的 version: 2"):
+    with pytest.raises(ConfigError, match="Unsupported version: 2"):
         ConfigManager(p).load()
 
 
@@ -124,7 +125,7 @@ def test_validate_missing_version(tmp_path):
     cfg = _valid_config()
     del cfg["version"]
     p = _write_config(tmp_path, cfg)
-    with pytest.raises(ConfigError, match="缺少 version 字段"):
+    with pytest.raises(ConfigError, match="Missing 'version' field"):
         ConfigManager(p).load()
 
 
@@ -153,7 +154,7 @@ def test_validate_unknown_group_rejected(tmp_path):
     cfg = _valid_config()
     cfg["extensions"]["unknown"] = {}
     p = _write_config(tmp_path, cfg)
-    with pytest.raises(ConfigError, match="未知的扩展分类 'unknown'"):
+    with pytest.raises(ConfigError, match="Unknown extension category 'unknown'"):
         ConfigManager(p).load()
 
 
@@ -186,7 +187,7 @@ def test_validate_visible_missing_rejected(tmp_path):
     cfg = _valid_config()
     del cfg["extensions"]["skills"]["brainstorming"]["visible"]
     p = _write_config(tmp_path, cfg)
-    with pytest.raises(ConfigError, match="缺少 visible 字段"):
+    with pytest.raises(ConfigError, match="missing 'visible' field"):
         ConfigManager(p).load()
 
 
@@ -202,7 +203,7 @@ def test_validate_visible_non_bool_rejected(tmp_path):
     cfg = _valid_config()
     cfg["extensions"]["skills"]["brainstorming"]["visible"] = "yes"
     p = _write_config(tmp_path, cfg)
-    with pytest.raises(ConfigError, match="visible 必须为布尔值"):
+    with pytest.raises(ConfigError, match="'visible' must be a boolean"):
         ConfigManager(p).load()
 
 
@@ -211,7 +212,7 @@ def test_validate_duplicate_name_across_groups_rejected(tmp_path):
     ext = cfg["extensions"]["skills"]["brainstorming"]
     cfg["extensions"]["agents"]["brainstorming"] = dict(ext)
     p = _write_config(tmp_path, cfg)
-    with pytest.raises(ConfigError, match="多个分类中重复"):
+    with pytest.raises(ConfigError, match="duplicated across multiple categories"):
         ConfigManager(p).load()
 
 
@@ -275,7 +276,7 @@ def test_validate_key_with_slash_rejected(tmp_path):
     ext = cfg["extensions"]["skills"].pop("brainstorming")
     cfg["extensions"]["skills"]["skills/brainstorming"] = ext
     p = _write_config(tmp_path, cfg)
-    with pytest.raises(ConfigError, match="格式错误"):
+    with pytest.raises(ConfigError, match="invalid format"):
         ConfigManager(p).load()
 
 
@@ -284,7 +285,7 @@ def test_validate_key_with_dotdot_rejected(tmp_path):
     ext = cfg["extensions"]["skills"].pop("brainstorming")
     cfg["extensions"]["skills"]["../evil"] = ext
     p = _write_config(tmp_path, cfg)
-    with pytest.raises(ConfigError, match="非法字符"):
+    with pytest.raises(ConfigError, match="illegal characters"):
         ConfigManager(p).load()
 
 
@@ -294,7 +295,7 @@ def test_validate_depends_path_dep_missing_source(tmp_path):
         {"target": "skills/brainstorming.md"}
     ]
     p = _write_config(tmp_path, cfg)
-    with pytest.raises(ConfigError, match="缺少 source 或 target 字段"):
+    with pytest.raises(ConfigError, match="missing 'source' or 'target' field"):
         ConfigManager(p).load()
 
 
@@ -302,7 +303,7 @@ def test_validate_depends_invalid_type(tmp_path):
     cfg = _valid_config()
     cfg["extensions"]["skills"]["brainstorming"]["depends"] = [123]
     p = _write_config(tmp_path, cfg)
-    with pytest.raises(ConfigError, match="依赖类型不合法"):
+    with pytest.raises(ConfigError, match="invalid dependency type"):
         ConfigManager(p).load()
 
 
@@ -317,7 +318,7 @@ def test_validate_ext_dep_not_exist_rejected(tmp_path):
     cfg = _valid_config()
     cfg["extensions"]["skills"]["brainstorming"]["depends"] = ["skills/nonexistent"]
     p = _write_config(tmp_path, cfg)
-    with pytest.raises(ConfigError, match="不存在"):
+    with pytest.raises(ConfigError, match="does not exist"):
         ConfigManager(p).load()
 
 
@@ -325,7 +326,7 @@ def test_validate_ext_dep_bare_name_rejected(tmp_path):
     cfg = _valid_config()
     cfg["extensions"]["agents"]["kernel-dev"]["depends"] = ["brainstorming"]
     p = _write_config(tmp_path, cfg)
-    with pytest.raises(ConfigError, match="格式错误"):
+    with pytest.raises(ConfigError, match="invalid format"):
         ConfigManager(p).load()
 
 
@@ -333,7 +334,7 @@ def test_validate_ext_dep_invalid_group_rejected(tmp_path):
     cfg = _valid_config()
     cfg["extensions"]["agents"]["kernel-dev"]["depends"] = ["unknown/brainstorming"]
     p = _write_config(tmp_path, cfg)
-    with pytest.raises(ConfigError, match="分类 'unknown' 不合法"):
+    with pytest.raises(ConfigError, match="invalid category 'unknown'"):
         ConfigManager(p).load()
 
 
@@ -341,7 +342,7 @@ def test_validate_ext_dep_group_mismatch_rejected(tmp_path):
     cfg = _valid_config()
     cfg["extensions"]["agents"]["kernel-dev"]["depends"] = ["agents/brainstorming"]
     p = _write_config(tmp_path, cfg)
-    with pytest.raises(ConfigError, match="分类不匹配"):
+    with pytest.raises(ConfigError, match="category mismatch"):
         ConfigManager(p).load()
 
 
@@ -349,7 +350,7 @@ def test_validate_ext_dep_empty_rejected(tmp_path):
     cfg = _valid_config()
     cfg["extensions"]["skills"]["brainstorming"]["depends"] = [""]
     p = _write_config(tmp_path, cfg)
-    with pytest.raises(ConfigError, match="扩展依赖名称不能为空"):
+    with pytest.raises(ConfigError, match="empty dependency name"):
         ConfigManager(p).load()
 
 
@@ -398,7 +399,7 @@ def test_simple_cycle(tmp_path):
         },
     }
     p = _write_config(tmp_path, cfg)
-    with pytest.raises(ConfigError, match="循环依赖"):
+    with pytest.raises(ConfigError, match="Circular dependency"):
         ConfigManager(p).load()
 
 
@@ -436,7 +437,7 @@ def test_three_node_cycle(tmp_path):
         },
     }
     p = _write_config(tmp_path, cfg)
-    with pytest.raises(ConfigError, match="循环依赖"):
+    with pytest.raises(ConfigError, match="Circular dependency"):
         ConfigManager(p).load()
 
 
@@ -1256,8 +1257,8 @@ def test_show_change_summary_with_cascade():
     ui.show_change_summary(changes)
     call_args = adapter.run_yesno.call_args
     text = call_args[0][1]
-    assert "禁用" in text
-    assert "级联禁用" in text
+    assert "Disable" in text
+    assert "Cascade disabled" in text
     assert "b" in text
     assert "c" in text
 
@@ -1273,7 +1274,7 @@ def test_show_change_summary_no_cascade():
     ui.show_change_summary(changes)
     call_args = adapter.run_yesno.call_args
     text = call_args[0][1]
-    assert "级联禁用" not in text
+    assert "Cascade disabled" not in text
 
 
 def test_show_change_summary_cascade_before_rejected():
@@ -1282,14 +1283,14 @@ def test_show_change_summary_cascade_before_rejected():
         to_enable=[],
         to_disable=["a"],
         cascade_disabled=["b"],
-        rejected=[{"name": "c", "reason": "被依赖", "dependents": ["d"]}],
+        rejected=[{"name": "c", "reason": "required by others", "dependents": ["d"]}],
     )
     ui.show_change_summary(changes)
     call_args = adapter.run_yesno.call_args
     text = call_args[0][1]
     lines = text.split("\n")
-    cascade_idx = next(i for i, l in enumerate(lines) if "级联禁用" in l)
-    rejected_idx = next(i for i, l in enumerate(lines) if "拒绝禁用" in l)
+    cascade_idx = next(i for i, l in enumerate(lines) if "Cascade disabled" in l)
+    rejected_idx = next(i for i, l in enumerate(lines) if "Refused to disable" in l)
     assert cascade_idx < rejected_idx
 
 
@@ -1486,6 +1487,44 @@ def test_format_constants():
 
 def test_default_target_dir():
     assert DEFAULT_TARGET_DIR == "~/.config/opencode"
+
+
+def test_resolve_target_dir_posix_no_drive():
+    """On POSIX without a Windows drive path, just expand ~."""
+    with patch("ext_mgr.os.name", "posix"), \
+         patch("ext_mgr.os.path.expanduser", return_value="/home/user/.config/opencode"):
+        assert resolve_target_dir("~/.config/opencode") == "/home/user/.config/opencode"
+
+
+def test_resolve_target_dir_msys_win_home():
+    """Under MSYS2/Git Bash with HOME=C:\\Users\\name, convert to /C/Users/name."""
+    win_path = r"C:\Users\songj\.config\opencode"
+    with patch("ext_mgr.os.name", "posix"), \
+         patch("ext_mgr.os.path.expanduser", return_value=win_path):
+        assert resolve_target_dir("~/.config/opencode") == "/C/Users/songj/.config/opencode"
+
+
+def test_resolve_target_dir_msys_win_home_mixed_slash():
+    """expanduser may produce mixed-slash paths like C:\\Users\\name/.config/..."""
+    mixed = r"C:\Users\songj/.config/opencode"
+    with patch("ext_mgr.os.name", "posix"), \
+         patch("ext_mgr.os.path.expanduser", return_value=mixed):
+        assert resolve_target_dir("~/.config/opencode") == "/C/Users/songj/.config/opencode"
+
+
+def test_resolve_target_dir_native_windows_no_conversion():
+    """On native Windows Python (os.name == 'nt'), keep the Windows path as-is."""
+    win_path = r"C:\Users\songj\.config\opencode"
+    with patch("ext_mgr.os.name", "nt"), \
+         patch("ext_mgr.os.path.expanduser", return_value=win_path):
+        assert resolve_target_dir("~/.config/opencode") == win_path
+
+
+def test_resolve_target_dir_already_posix_drive():
+    """Already-converted /C/Users/... should pass through unchanged."""
+    with patch("ext_mgr.os.name", "posix"), \
+         patch("ext_mgr.os.path.expanduser", return_value="/C/Users/songj/.config/opencode"):
+        assert resolve_target_dir("/C/Users/songj/.config/opencode") == "/C/Users/songj/.config/opencode"
 
 
 def test_make_extensions_basic():
@@ -1812,7 +1851,7 @@ def test_npm_install_timeout_returns_error(tmp_path):
          patch("ext_mgr.shutil.which", return_value="/usr/bin/npm"):
         results = mgr.install_for(["p"], exts)
     assert results[0]["status"] == Status.ERROR
-    assert "超时" in results[0]["detail"]
+    assert "timed out" in results[0]["detail"]
 
 
 def test_npm_install_npm_missing_returns_error(tmp_path):
@@ -1828,7 +1867,7 @@ def test_npm_install_npm_missing_returns_error(tmp_path):
          patch("ext_mgr.shutil.which", return_value=None):
         results = mgr.install_for(["p"], exts)
     assert results[0]["status"] == Status.ERROR
-    assert "npm 未安装" in results[0]["detail"]
+    assert "npm not installed" in results[0]["detail"]
     assert mock_run.call_count == 0
 
 
@@ -1859,7 +1898,7 @@ def test_show_installing_progress_calls_infobox():
     ui.show_installing_progress("/some/pkg/dir")
     adapter.run_infobox.assert_called_once()
     args, _ = adapter.run_infobox.call_args
-    assert "安装" in args[0] and "依赖" in args[0]
+    assert "Installing" in args[0] and "dependencies" in args[0]
     assert "/some/pkg/dir" in args[0]
 
 
