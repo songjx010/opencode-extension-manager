@@ -10,7 +10,7 @@
 - **原子配置回写**：配置变更通过临时文件 + `os.replace` 原子写入，保证数据安全
 - **可用性检查**：实时检测缺失依赖，缺失的扩展在界面中标记并禁止勾选
 - **隐藏扩展**：`visible: false` 的扩展不进入勾选列表，但仍参与依赖管理
-- **插件依赖安装**：使能 plugin 类型扩展时，自动在其 source 目录的 `package.json` 所在处执行 `npm install`
+- **插件依赖安装**：使能 plugin 类型扩展时，自动在其 source 目录的 `package.json` 所在处执行 `npm install`，安装后校验依赖是否真正就绪，未就绪自动重试
 
 ## 前置条件
 
@@ -286,7 +286,9 @@ python3 ext_mgr.py
 
 - 同一目录只安装一次（多个 `source` 指向同一目录时自动去重）
 - 仅 `plugin` 类型触发；其他类型即使存在 `package.json` 也不执行
-- 安装失败（非零退出、超时、npm 未安装）非阻断：符号链接照常创建、`enabled` 照常写入，仅在结果界面以 `ERROR` 呈现
+- **安装后校验**：`npm install` 退出码为 0 并不代表依赖真正写入磁盘，因此每次执行后会检查 `package.json` 中声明的 `dependencies` / `devDependencies` 是否确实存在于 `node_modules` 下（支持 `@scope/name` 形式）
+- **失败重试**：退出码非 0 或校验未通过时，最多重试 3 次（即最多 4 次尝试）。超时与意外异常不重试（超时已耗时过长），立即报错
+- 安装/校验失败（重试耗尽、超时、npm 未安装）非阻断：符号链接照常创建、`enabled` 照常写入，仅在结果界面以 `ERROR` 呈现
 - 禁用插件时**不删除**已安装的 `node_modules`，保留依赖
 
 ## 架构
@@ -315,7 +317,7 @@ python3 ext_mgr.py
 |------|------|
 | `ConfigManager` | 加载 / 校验 / 保存 `extensions.json`，处理原子写入与 `extra` 未知字段保留 |
 | `SymlinkManager` | 创建 / 删除符号链接，返回带状态的结果列表 |
-| `NpmDependencyManager` | 使能 plugin 扩展时在其 source 目录的 package.json 所在处执行 `npm install` |
+| `NpmDependencyManager` | 使能 plugin 扩展时在其 source 目录的 package.json 所在处执行 `npm install`，安装后校验依赖并按需重试（最多 3 次） |
 | `Validator` | 编程式符号链接状态校验（独立工具，未接入 `main()` 运行时主循环） |
 
 ### TUI 层

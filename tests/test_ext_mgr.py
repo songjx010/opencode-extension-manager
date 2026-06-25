@@ -1899,6 +1899,124 @@ def test_npm_install_external_absolute_path(tmp_path):
     assert mock_run.call_args.kwargs["cwd"] == str(ext_dir)
 
 
+def test_npm_install_verifies_deps_present_succeeds(tmp_path):
+    pkg_dir = tmp_path / "p"
+    pkg_dir.mkdir()
+    (pkg_dir / "package.json").write_text(
+        '{"name":"p","dependencies":{"lodash":"^4.0.0"}}')
+    (pkg_dir / "node_modules" / "lodash").mkdir(parents=True)
+    exts = make_extensions({
+        "p": {"type": "plugin", "enabled": False,
+              "path_deps": [(str(pkg_dir), "plugins/p")]},
+    })
+    mgr = NpmDependencyManager(str(tmp_path))
+    fake = MagicMock(returncode=0, stderr="", stdout="")
+    with patch("ext_mgr.subprocess.run", return_value=fake) as mock_run, \
+         patch("ext_mgr.shutil.which", return_value="/usr/bin/npm"):
+        results = mgr.install_for(["p"], exts)
+    assert results[0]["status"] == Status.SUCCESS
+    assert mock_run.call_count == 1
+
+
+def test_npm_install_retries_when_deps_missing_then_succeeds(tmp_path):
+    pkg_dir = tmp_path / "p"
+    pkg_dir.mkdir()
+    (pkg_dir / "package.json").write_text(
+        '{"name":"p","dependencies":{"lodash":"^4.0.0"}}')
+    exts = make_extensions({
+        "p": {"type": "plugin", "enabled": False,
+              "path_deps": [(str(pkg_dir), "plugins/p")]},
+    })
+    mgr = NpmDependencyManager(str(tmp_path))
+    state = {"n": 0}
+
+    def fake_run(*args, **kwargs):
+        state["n"] += 1
+        if state["n"] >= 2:
+            (pkg_dir / "node_modules" / "lodash").mkdir(parents=True, exist_ok=True)
+        return MagicMock(returncode=0, stderr="", stdout="")
+
+    with patch("ext_mgr.subprocess.run", side_effect=fake_run) as mock_run, \
+         patch("ext_mgr.shutil.which", return_value="/usr/bin/npm"):
+        results = mgr.install_for(["p"], exts)
+    assert results[0]["status"] == Status.SUCCESS
+    assert mock_run.call_count == 2
+
+
+def test_npm_install_verify_missing_all_retries(tmp_path):
+    pkg_dir = tmp_path / "p"
+    pkg_dir.mkdir()
+    (pkg_dir / "package.json").write_text(
+        '{"name":"p","dependencies":{"lodash":"^4.0.0"}}')
+    exts = make_extensions({
+        "p": {"type": "plugin", "enabled": False,
+              "path_deps": [(str(pkg_dir), "plugins/p")]},
+    })
+    mgr = NpmDependencyManager(str(tmp_path))
+    fake = MagicMock(returncode=0, stderr="", stdout="")
+    with patch("ext_mgr.subprocess.run", return_value=fake) as mock_run, \
+         patch("ext_mgr.shutil.which", return_value="/usr/bin/npm"):
+        results = mgr.install_for(["p"], exts)
+    assert results[0]["status"] == Status.ERROR
+    assert "verification" in results[0]["detail"]
+    assert mock_run.call_count == 4
+
+
+def test_npm_install_failure_retries_max_attempts(tmp_path):
+    pkg_dir = tmp_path / "p"
+    pkg_dir.mkdir()
+    (pkg_dir / "package.json").write_text("{}")
+    exts = make_extensions({
+        "p": {"type": "plugin", "enabled": False,
+              "path_deps": [(str(pkg_dir), "plugins/p")]},
+    })
+    mgr = NpmDependencyManager(str(tmp_path))
+    fake = MagicMock(returncode=1, stderr="boom", stdout="")
+    with patch("ext_mgr.subprocess.run", return_value=fake) as mock_run, \
+         patch("ext_mgr.shutil.which", return_value="/usr/bin/npm"):
+        results = mgr.install_for(["p"], exts)
+    assert results[0]["status"] == Status.ERROR
+    assert "boom" in results[0]["detail"]
+    assert mock_run.call_count == 4
+
+
+def test_npm_install_timeout_does_not_retry(tmp_path):
+    pkg_dir = tmp_path / "p"
+    pkg_dir.mkdir()
+    (pkg_dir / "package.json").write_text("{}")
+    exts = make_extensions({
+        "p": {"type": "plugin", "enabled": False,
+              "path_deps": [(str(pkg_dir), "plugins/p")]},
+    })
+    mgr = NpmDependencyManager(str(tmp_path))
+    with patch("ext_mgr.subprocess.run",
+               side_effect=subprocess.TimeoutExpired(cmd="npm", timeout=300)) as mock_run, \
+         patch("ext_mgr.shutil.which", return_value="/usr/bin/npm"):
+        results = mgr.install_for(["p"], exts)
+    assert results[0]["status"] == Status.ERROR
+    assert "timed out" in results[0]["detail"]
+    assert mock_run.call_count == 1
+
+
+def test_npm_install_verifies_scoped_dep(tmp_path):
+    pkg_dir = tmp_path / "p"
+    pkg_dir.mkdir()
+    (pkg_dir / "package.json").write_text(
+        '{"name":"p","dependencies":{"@types/node":"^20.0.0"}}')
+    (pkg_dir / "node_modules" / "@types" / "node").mkdir(parents=True)
+    exts = make_extensions({
+        "p": {"type": "plugin", "enabled": False,
+              "path_deps": [(str(pkg_dir), "plugins/p")]},
+    })
+    mgr = NpmDependencyManager(str(tmp_path))
+    fake = MagicMock(returncode=0, stderr="", stdout="")
+    with patch("ext_mgr.subprocess.run", return_value=fake) as mock_run, \
+         patch("ext_mgr.shutil.which", return_value="/usr/bin/npm"):
+        results = mgr.install_for(["p"], exts)
+    assert results[0]["status"] == Status.SUCCESS
+    assert mock_run.call_count == 1
+
+
 # ---------- 安装进度提示 ----------
 
 def test_show_installing_progress_calls_infobox():

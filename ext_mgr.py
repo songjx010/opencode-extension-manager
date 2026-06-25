@@ -618,6 +618,7 @@ class NpmDependencyManager:
     """使能 plugin 扩展时，在其 source 目录的 package.json 所在处执行 npm install。"""
 
     NPM_INSTALL_TIMEOUT = 300
+    MAX_INSTALL_RETRIES = 3
 
     def __init__(self, source_dir: str):
         self._source_dir = os.path.abspath(source_dir)
@@ -625,7 +626,11 @@ class NpmDependencyManager:
     def install_for(self, to_enable, extensions, on_progress=None):
         """对 to_enable 中的 plugin 扩展，定位 source 目录下的 package.json，
         在该目录执行 npm install。返回 [{name, status, detail}] 结果列表。
-        on_progress(pkg_dir) 在每个目录开始安装前被调用（用于 UI 进度提示）。"""
+        on_progress(pkg_dir) 在每个目录开始安装前被调用（用于 UI 进度提示）。
+
+        npm install 退出码为 0 并不一定代表依赖真正写入磁盘，因此每次执行后
+        会校验 node_modules；未通过校验或退出码非 0 时最多重试
+        MAX_INSTALL_RETRIES 次。超时与意外异常不重试。"""
         install_dirs = self._collect_install_dirs(to_enable, extensions)
         if not install_dirs:
             return []
@@ -641,35 +646,69 @@ class NpmDependencyManager:
                 continue
             if on_progress is not None:
                 on_progress(pkg_dir)
-            log.info("Running npm install in %s", pkg_dir)
+            results.append(self._install_with_retry(pkg_dir, disp))
+        return results
+
+    def _install_with_retry(self, pkg_dir, disp):
+        """对单个目录执行 npm install，并在退出码为 0 后校验是否真正安装成功；
+        未安装成功（退出码非 0 或校验失败）则最多重试 MAX_INSTALL_RETRIES 次。
+        超时与意外异常视为不可重试，立即返回错误。"""
+        attempts = 1 + self.MAX_INSTALL_RETRIES
+        last_detail = "npm install failed"
+        for attempt in range(1, attempts + 1):
+            log.info("npm install attempt %d/%d in %s", attempt, attempts, pkg_dir)
             try:
                 proc = subprocess.run(
                     ["npm", "install"], cwd=pkg_dir,
                     capture_output=True, text=True,
                     timeout=self.NPM_INSTALL_TIMEOUT,
                 )
-                if proc.returncode == 0:
-                    log.info("npm install succeeded in %s", pkg_dir)
-                    results.append({"name": disp, "status": Status.SUCCESS,
-                                    "detail": "npm install"})
-                else:
-                    log.error(
-                        "npm install failed in %s (rc=%d): %s",
-                        pkg_dir, proc.returncode, (proc.stderr or "").strip()[-500:],
-                    )
-                    results.append({"name": disp, "status": Status.ERROR,
-                                    "detail": (proc.stderr or "")[-500:]})
             except subprocess.TimeoutExpired:
-                log.error(
-                    "npm install timed out in %s after %ds",
-                    pkg_dir, self.NPM_INSTALL_TIMEOUT,
-                )
-                results.append({"name": disp, "status": Status.ERROR,
-                                "detail": "npm install timed out"})
+                log.error("npm install timed out in %s after %ds",
+                          pkg_dir, self.NPM_INSTALL_TIMEOUT)
+                return {"name": disp, "status": Status.ERROR,
+                        "detail": "npm install timed out"}
             except Exception as e:
                 log.exception("Unexpected error during npm install in %s", pkg_dir)
-                results.append({"name": disp, "status": Status.ERROR, "detail": str(e)})
-        return results
+                return {"name": disp, "status": Status.ERROR, "detail": str(e)}
+            if proc.returncode != 0:
+                tail = (proc.stderr or "")[-500:]
+                log.error("npm install failed in %s (rc=%d): %s",
+                          pkg_dir, proc.returncode, tail.strip())
+                last_detail = tail or "npm install failed (rc=%d)" % proc.returncode
+                continue
+            if self._verify_install(pkg_dir):
+                log.info("npm install succeeded in %s on attempt %d", pkg_dir, attempt)
+                return {"name": disp, "status": Status.SUCCESS, "detail": "npm install"}
+            log.warning("npm install verification failed in %s (attempt %d)",
+                        pkg_dir, attempt)
+            last_detail = "npm install verification failed (missing dependencies)"
+        log.error("npm install gave up in %s after %d attempts", pkg_dir, attempts)
+        return {"name": disp, "status": Status.ERROR, "detail": last_detail}
+
+    def _verify_install(self, pkg_dir):
+        """校验 npm install 是否真正安装成功：package.json 中声明的
+        dependencies / devDependencies 是否都存在于 node_modules 下。
+        未声明依赖或无法读取 package.json 时视为通过（无可校验项）。"""
+        pkg_json = os.path.join(pkg_dir, "package.json")
+        try:
+            with open(pkg_json, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            log.warning("verify: cannot read package.json in %s; skip verification", pkg_dir)
+            return True
+        deps = {}
+        deps.update(data.get("dependencies") or {})
+        deps.update(data.get("devDependencies") or {})
+        if not deps:
+            return True
+        node_modules = os.path.join(pkg_dir, "node_modules")
+        for name in deps:
+            parts = name.split("/") if name.startswith("@") else [name]
+            if not os.path.isdir(os.path.join(node_modules, *parts)):
+                log.warning("verify: missing dependency %s under %s", name, node_modules)
+                return False
+        return True
 
     def _collect_install_dirs(self, to_enable, extensions):
         """收集需执行 npm install 的唯一 package 目录（按发现顺序去重）。"""
