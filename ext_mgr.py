@@ -637,10 +637,10 @@ class NpmDependencyManager:
         MAX_INSTALL_RETRIES 次。超时与意外异常不重试。
 
         Windows (os.name == 'nt') 下不执行 npm install，直接返回单条 SKIPPED。"""
-        if os.name == "nt":
-            log.info("Windows detected (os.name=nt); skipping npm install")
-            return [{"name": "npm install", "status": Status.SKIPPED,
-                     "detail": "skipped on Windows"}]
+        # if os.name == "nt":
+        #     log.info("Windows detected (os.name=nt); skipping npm install")
+        #     return [{"name": "npm install", "status": Status.SKIPPED,
+        #              "detail": "skipped on Windows"}]
         install_dirs = self._collect_install_dirs(to_enable, extensions)
         if not install_dirs:
             return []
