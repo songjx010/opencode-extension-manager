@@ -21,6 +21,7 @@ from ext_mgr import (
     DialogAdapter,
     DEFAULT_TARGET_DIR,
     resolve_target_dir,
+    _to_posix_drive_path,
 )
 
 
@@ -749,6 +750,47 @@ def test_remove_symlink_not_exist(tmp_path):
     })
     results = mgr.apply_for_extension("brainstorming", exts, "remove")
     assert results[0]["status"] == "skipped"
+
+
+def test_symlink_manager_preserves_posix_target_on_windows():
+    """On Windows, target_dir already in /C/ POSIX form must survive __init__
+    verbatim (os.path.abspath would corrupt it to C:\\C\\..)."""
+    with patch("ext_mgr.os.name", "nt"):
+        mgr = SymlinkManager(r"C:\proj\src", "/C/Users/name/.config/opencode")
+    assert mgr._target_dir == "/C/Users/name/.config/opencode"
+
+
+def test_create_symlink_converts_paths_to_posix_on_windows():
+    """Under os.name=='nt', _create_symlink must hand os.symlink source and
+    target in /C/ POSIX form rather than C:\\.. backslash form."""
+    mgr = SymlinkManager.__new__(SymlinkManager)
+    mgr._source_dir = r"C:\proj\src"
+    mgr._target_dir = r"C:\proj\tgt"
+    symlink_mock = MagicMock()
+    with patch("ext_mgr.os.name", "nt"), \
+         patch.object(SymlinkManager, "_ensure_subdir"), \
+         patch("ext_mgr.os.symlink", symlink_mock), \
+         patch("ext_mgr.os.path.islink", return_value=False), \
+         patch("ext_mgr.os.path.exists", return_value=False):
+        result = mgr._create_symlink("skills/a.md", "skills/a.md")
+    assert result["status"] == Status.SUCCESS
+    symlink_mock.assert_called_once_with(
+        "/C/proj/src/skills/a.md", "/C/proj/tgt/skills/a.md"
+    )
+
+
+def test_remove_symlink_converts_target_to_posix_on_windows():
+    """Under os.name=='nt', _remove_symlink must operate on the /C/ POSIX form."""
+    mgr = SymlinkManager.__new__(SymlinkManager)
+    mgr._source_dir = r"C:\proj\src"
+    mgr._target_dir = r"C:\proj\tgt"
+    remove_mock = MagicMock()
+    with patch("ext_mgr.os.name", "nt"), \
+         patch.object(SymlinkManager, "_remove_existing", remove_mock), \
+         patch("ext_mgr.os.path.islink", return_value=True):
+        result = mgr._remove_symlink("skills/a.md", "skills/a.md")
+    assert result["status"] == Status.SUCCESS
+    remove_mock.assert_called_once_with("/C/proj/tgt/skills/a.md")
 
 
 def test_apply_for_extension_multiple_paths(tmp_path):
@@ -1614,6 +1656,20 @@ def test_resolve_target_dir_already_posix_drive():
     with patch("ext_mgr.os.name", "posix"), \
          patch("ext_mgr.os.path.expanduser", return_value="/C/Users/songj/.config/opencode"):
         assert resolve_target_dir("/C/Users/songj/.config/opencode") == "/C/Users/songj/.config/opencode"
+
+
+def test_to_posix_drive_path():
+    """Pure converter: drive paths -> /C/ POSIX; others unchanged; idempotent."""
+    assert _to_posix_drive_path(r"C:\Users\name\.config\opencode") == "/C/Users/name/.config/opencode"
+    assert _to_posix_drive_path("C:/Users/name") == "/C/Users/name"
+    # mixed separators as produced by expanduser under native Windows
+    assert _to_posix_drive_path(r"C:\Users\name/.config/opencode") == "/C/Users/name/.config/opencode"
+    # drive letter is upper-cased
+    assert _to_posix_drive_path(r"d:\foo\bar") == "/D/foo/bar"
+    # already-POSIX and non-drive paths pass through verbatim (idempotent)
+    assert _to_posix_drive_path("/C/Users/name") == "/C/Users/name"
+    assert _to_posix_drive_path("/home/user/.config") == "/home/user/.config"
+    assert _to_posix_drive_path("relative/path") == "relative/path"
 
 
 def test_make_extensions_basic():

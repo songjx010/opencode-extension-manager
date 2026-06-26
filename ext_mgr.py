@@ -68,20 +68,26 @@ DEFAULT_TARGET_DIR = "~/.config/opencode"
 _WIN_DRIVE_RE = re.compile(r'^([A-Za-z]):[\\/](.*)')
 
 
+def _to_posix_drive_path(path):
+    """Convert a Windows drive path (``C:\\...`` or ``C:/...``) to the POSIX
+    form (``/C/...``) recognized by Git Bash / MSYS2. Already-POSIX paths and
+    non-drive paths are returned unchanged; the conversion is idempotent.
+    """
+    m = _WIN_DRIVE_RE.match(path)
+    if m:
+        return "/" + m.group(1).upper() + "/" + m.group(2).replace("\\", "/")
+    return path
+
+
 def resolve_target_dir(path):
     """Expand ~ and convert Windows drive paths to POSIX form
     (e.g. ``C:\\Users\\name/.config/opencode`` -> ``/C/Users/name/.config/opencode``),
     the form recognized by Git Bash / MSYS2. Conversion is unconditional so the
     result is consistent regardless of the host Python's os.name.
     """
-    expanded = os.path.expanduser(path)
-    m = _WIN_DRIVE_RE.match(expanded)
-    if m:
-        result = "/" + m.group(1).upper() + "/" + m.group(2).replace("\\", "/")
-        log.debug("resolve_target_dir(drive): %r -> %r", path, result)
-        return result
-    log.debug("resolve_target_dir: %r -> %r", path, expanded)
-    return expanded
+    result = _to_posix_drive_path(os.path.expanduser(path))
+    log.debug("resolve_target_dir: %r -> %r", path, result)
+    return result
 
 
 def parse_depends(depends_list):
@@ -536,7 +542,14 @@ class ExtensionStore:
 class SymlinkManager:
     def __init__(self, source_dir: str, target_dir: str):
         self._source_dir = os.path.abspath(source_dir)
-        self._target_dir = os.path.abspath(target_dir)
+        # target_dir usually comes from resolve_target_dir() already in Git Bash
+        # POSIX form (/C/..). On native Windows os.path.abspath corrupts such a
+        # leading-'/' path (treats it as the current drive's root, e.g.
+        # /C/Users -> C:\C\Users), so preserve already-POSIX values verbatim.
+        if os.name == "nt" and target_dir.startswith("/") and not target_dir.startswith("//"):
+            self._target_dir = target_dir
+        else:
+            self._target_dir = os.path.abspath(target_dir)
 
     def apply_changes(self, to_enable, to_disable, extensions):
         results = []
@@ -564,6 +577,9 @@ class SymlinkManager:
     def _create_symlink(self, source_rel, target_rel):
         source = os.path.join(self._source_dir, source_rel)
         target = os.path.join(self._target_dir, target_rel)
+        if os.name == "nt":
+            source = _to_posix_drive_path(source)
+            target = _to_posix_drive_path(target)
         self._ensure_subdir(os.path.dirname(target))
         try:
             if os.path.islink(target) or os.path.exists(target):
@@ -578,6 +594,8 @@ class SymlinkManager:
 
     def _remove_symlink(self, source_rel, target_rel):
         target = os.path.join(self._target_dir, target_rel)
+        if os.name == "nt":
+            target = _to_posix_drive_path(target)
         if not os.path.islink(target) and not os.path.exists(target):
             log.debug("No symlink to remove: %s", target)
             return {"name": target_rel, "status": Status.SKIPPED, "detail": ""}
