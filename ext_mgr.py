@@ -65,30 +65,34 @@ class Format:
 
 DEFAULT_TARGET_DIR = "~/.config/opencode"
 
-_WIN_DRIVE_RE = re.compile(r'^([A-Za-z]):[\\/](.*)')
+_WIN_DRIVE_LETTER_PREFIX = re.compile(r'^/([A-Za-z])/')
 
 
-def _to_posix_drive_path(path):
-    """Convert a Windows drive path (``C:\\...`` or ``C:/...``) to the POSIX
-    form (``/C/...``) recognized by Git Bash / MSYS2, and normalize any stray
-    backslashes to forward slashes (``os.path.join`` on native Windows inserts
-    them even between already-POSIX segments, e.g. ``/C/...\\skills/x``).
-    Already-POSIX paths are returned unchanged; the conversion is idempotent.
+def _to_windows_path(path):
+    """On Windows, normalize a path to native backslash form so that
+    os.makedirs / os.symlink / os.path operations resolve it correctly under
+    native Windows Python (Git Bash invokes the Windows python.exe, whose
+    os.name == 'nt'). Converts MSYS-style drive prefixes (``/C/..`` ->
+    ``C:\\..``) and replaces forward slashes with backslashes, e.g. the
+    mixed-slash output of expanduser ``C:\\Users\\x/.config`` ->
+    ``C:\\Users\\x\\.config``. On POSIX this is a no-op; idempotent.
     """
-    posix = path.replace("\\", "/")
-    m = _WIN_DRIVE_RE.match(posix)
+    if os.name != "nt":
+        return path
+    m = _WIN_DRIVE_LETTER_PREFIX.match(path)
     if m:
-        return "/" + m.group(1).upper() + "/" + m.group(2)
-    return posix
+        return m.group(1).upper() + ":\\" + path[m.end():].replace("/", "\\")
+    return path.replace("/", "\\")
 
 
 def resolve_target_dir(path):
-    """Expand ~ and convert Windows drive paths to POSIX form
-    (e.g. ``C:\\Users\\name/.config/opencode`` -> ``/C/Users/name/.config/opencode``),
-    the form recognized by Git Bash / MSYS2. Conversion is unconditional so the
-    result is consistent regardless of the host Python's os.name.
+    """Expand ~ and normalize to the host platform's native form. On Windows,
+    forward slashes (and MSYS-style ``/C/..`` prefixes) are converted to native
+    backslash form (e.g. ``C:\\Users\\name/.config/opencode`` ->
+    ``C:\\Users\\name\\.config\\opencode``) so native os.makedirs / os.symlink
+    operate on the right path. On POSIX the path is returned as-is.
     """
-    result = _to_posix_drive_path(os.path.expanduser(path))
+    result = _to_windows_path(os.path.expanduser(path))
     log.debug("resolve_target_dir: %r -> %r", path, result)
     return result
 
@@ -544,15 +548,13 @@ class ExtensionStore:
 
 class SymlinkManager:
     def __init__(self, source_dir: str, target_dir: str):
-        self._source_dir = os.path.abspath(source_dir)
-        # target_dir usually comes from resolve_target_dir() already in Git Bash
-        # POSIX form (/C/..). On native Windows os.path.abspath corrupts such a
-        # leading-'/' path (treats it as the current drive's root, e.g.
-        # /C/Users -> C:\C\Users), so preserve already-POSIX values verbatim.
-        if os.name == "nt" and target_dir.startswith("/") and not target_dir.startswith("//"):
-            self._target_dir = target_dir
-        else:
-            self._target_dir = os.path.abspath(target_dir)
+        # Normalize to the host platform's native form. On Windows this converts
+        # MSYS-style drive prefixes (/C/..) and forward slashes to native
+        # backslash form (C:\..) BEFORE abspath (abspath would otherwise corrupt
+        # a leading-/C/ path into C:\C\.. on native Windows). _to_windows_path is
+        # a no-op on POSIX.
+        self._source_dir = os.path.abspath(_to_windows_path(source_dir))
+        self._target_dir = os.path.abspath(_to_windows_path(target_dir))
 
     def apply_changes(self, to_enable, to_disable, extensions):
         results = []
@@ -578,13 +580,10 @@ class SymlinkManager:
         return results
 
     def _create_symlink(self, source_rel, target_rel):
-        source = os.path.join(self._source_dir, source_rel)
-        target = os.path.join(self._target_dir, target_rel)
-        if os.name == "nt":
-            source = _to_posix_drive_path(source)
-            target = _to_posix_drive_path(target)
-        self._ensure_subdir(os.path.dirname(target))
+        source = _to_windows_path(os.path.join(self._source_dir, source_rel))
+        target = _to_windows_path(os.path.join(self._target_dir, target_rel))
         try:
+            self._ensure_subdir(os.path.dirname(target))
             if os.path.islink(target) or os.path.exists(target):
                 log.info("Removing existing path before (re)creating symlink: %s", target)
                 self._remove_existing(target)
@@ -596,9 +595,7 @@ class SymlinkManager:
             return {"name": target_rel, "status": Status.ERROR, "detail": str(e)}
 
     def _remove_symlink(self, source_rel, target_rel):
-        target = os.path.join(self._target_dir, target_rel)
-        if os.name == "nt":
-            target = _to_posix_drive_path(target)
+        target = _to_windows_path(os.path.join(self._target_dir, target_rel))
         if not os.path.islink(target) and not os.path.exists(target):
             log.debug("No symlink to remove: %s", target)
             return {"name": target_rel, "status": Status.SKIPPED, "detail": ""}
@@ -1107,7 +1104,9 @@ class DialogUI:
                     color = Format.BOLD + Format.MAGENTA
                 else:
                     color = Format.BOLD + Format.RED
-                lines.append(f"{name}\t{color}{r['status']}{Format.RESET}")
+                detail = r.get("detail") or ""
+                suffix = f"  {detail}" if detail else ""
+                lines.append(f"{name}\t{color}{r['status']}{Format.RESET}{suffix}")
         self._adapter.run_msgbox("Results", "\n".join(lines))
 
     def show_error(self, message):

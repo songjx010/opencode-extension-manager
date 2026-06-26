@@ -21,7 +21,7 @@ from ext_mgr import (
     DialogAdapter,
     DEFAULT_TARGET_DIR,
     resolve_target_dir,
-    _to_posix_drive_path,
+    _to_windows_path,
 )
 
 
@@ -752,17 +752,82 @@ def test_remove_symlink_not_exist(tmp_path):
     assert results[0]["status"] == "skipped"
 
 
-def test_symlink_manager_preserves_posix_target_on_windows():
-    """On Windows, target_dir already in /C/ POSIX form must survive __init__
-    verbatim (os.path.abspath would corrupt it to C:\\C\\..)."""
-    with patch("ext_mgr.os.name", "nt"):
+def test_create_symlink_oserror_returns_error(tmp_path):
+    """When os.symlink raises OSError, the result is ERROR with the message in
+    detail so the user can perceive the failure."""
+    source, target = _setup_dirs(tmp_path)
+    (tmp_path / "source" / "skills").mkdir()
+    (tmp_path / "source" / "skills" / "brainstorming.md").write_text("skill")
+    mgr = SymlinkManager(source, target)
+    exts = make_extensions_from_raw({
+        "brainstorming": {
+            "type": "skill", "enabled": True, "description": "Brain",
+            "depends": [{"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}],
+        }
+    })
+    with patch("ext_mgr.os.symlink", side_effect=OSError("symlink boom")):
+        results = mgr.apply_for_extension("brainstorming", exts, "create")
+    assert results[0]["status"] == Status.ERROR
+    assert "symlink boom" in results[0]["detail"]
+
+
+def test_create_symlink_makedirs_error_returns_error(tmp_path):
+    """When the subdir creation (os.makedirs) raises OSError, the result is
+    ERROR with detail (previously this propagated uncaught)."""
+    source, target = _setup_dirs(tmp_path)
+    (tmp_path / "source" / "skills").mkdir()
+    (tmp_path / "source" / "skills" / "brainstorming.md").write_text("skill")
+    mgr = SymlinkManager(source, target)
+    exts = make_extensions_from_raw({
+        "brainstorming": {
+            "type": "skill", "enabled": True, "description": "Brain",
+            "depends": [{"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}],
+        }
+    })
+    with patch.object(SymlinkManager, "_ensure_subdir", side_effect=OSError("makedirs boom")):
+        results = mgr.apply_for_extension("brainstorming", exts, "create")
+    assert results[0]["status"] == Status.ERROR
+    assert "makedirs boom" in results[0]["detail"]
+
+
+def test_remove_symlink_oserror_returns_error(tmp_path):
+    """When removing an existing path (shutil.rmtree / os.unlink) raises
+    OSError, the result is ERROR with detail so the user perceives it."""
+    source, target = _setup_dirs(tmp_path)
+    (tmp_path / "source" / "skills").mkdir()
+    (tmp_path / "source" / "skills" / "brainstorming.md").write_text("skill")
+    (tmp_path / "target" / "skills").mkdir(parents=True)
+    os.symlink(
+        str(tmp_path / "source" / "skills" / "brainstorming.md"),
+        os.path.join(target, "skills", "brainstorming.md"),
+    )
+    mgr = SymlinkManager(source, target)
+    exts = make_extensions_from_raw({
+        "brainstorming": {
+            "type": "skill", "enabled": True, "description": "Brain",
+            "depends": [{"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}],
+        }
+    })
+    with patch.object(SymlinkManager, "_remove_existing", side_effect=OSError("unlink boom")):
+        results = mgr.apply_for_extension("brainstorming", exts, "remove")
+    assert results[0]["status"] == Status.ERROR
+    assert "unlink boom" in results[0]["detail"]
+
+
+def test_symlink_manager_normalizes_target_on_windows():
+    """On Windows, a target_dir in MSYS /C/ form is normalized to native
+    backslash form (C:\\..) in __init__, and forward slashes are converted to
+    backslashes, so native os.makedirs / os.symlink resolve the right path."""
+    with patch("ext_mgr.os.name", "nt"), \
+         patch("ext_mgr.os.path.abspath", side_effect=lambda p: p):
         mgr = SymlinkManager(r"C:\proj\src", "/C/Users/name/.config/opencode")
-    assert mgr._target_dir == "/C/Users/name/.config/opencode"
+    assert mgr._source_dir == r"C:\proj\src"
+    assert mgr._target_dir == r"C:\Users\name\.config\opencode"
 
 
-def test_create_symlink_converts_paths_to_posix_on_windows():
+def test_create_symlink_converts_paths_to_windows():
     """Under os.name=='nt', _create_symlink must hand os.symlink source and
-    target in /C/ POSIX form rather than C:\\.. backslash form."""
+    target in native backslash form (C:\\..) rather than /C/ POSIX form."""
     mgr = SymlinkManager.__new__(SymlinkManager)
     mgr._source_dir = r"C:\proj\src"
     mgr._target_dir = r"C:\proj\tgt"
@@ -775,12 +840,13 @@ def test_create_symlink_converts_paths_to_posix_on_windows():
         result = mgr._create_symlink("skills/a.md", "skills/a.md")
     assert result["status"] == Status.SUCCESS
     symlink_mock.assert_called_once_with(
-        "/C/proj/src/skills/a.md", "/C/proj/tgt/skills/a.md"
+        r"C:\proj\src\skills\a.md", r"C:\proj\tgt\skills\a.md"
     )
 
 
-def test_remove_symlink_converts_target_to_posix_on_windows():
-    """Under os.name=='nt', _remove_symlink must operate on the /C/ POSIX form."""
+def test_remove_symlink_converts_target_to_windows():
+    """Under os.name=='nt', _remove_symlink must operate on the native
+    backslash form (C:\\..)."""
     mgr = SymlinkManager.__new__(SymlinkManager)
     mgr._source_dir = r"C:\proj\src"
     mgr._target_dir = r"C:\proj\tgt"
@@ -790,7 +856,7 @@ def test_remove_symlink_converts_target_to_posix_on_windows():
          patch("ext_mgr.os.path.islink", return_value=True):
         result = mgr._remove_symlink("skills/a.md", "skills/a.md")
     assert result["status"] == Status.SUCCESS
-    remove_mock.assert_called_once_with("/C/proj/tgt/skills/a.md")
+    remove_mock.assert_called_once_with(r"C:\proj\tgt\skills\a.md")
 
 
 def test_apply_for_extension_multiple_paths(tmp_path):
@@ -1617,63 +1683,52 @@ def test_resolve_target_dir_posix_no_drive():
         assert resolve_target_dir("~/.config/opencode") == "/home/user/.config/opencode"
 
 
-def test_resolve_target_dir_msys_win_home():
-    """Under MSYS2/Git Bash with HOME=C:\\Users\\name, convert to /C/Users/name."""
-    win_path = r"C:\Users\songj\.config\opencode"
-    with patch("ext_mgr.os.name", "posix"), \
-         patch("ext_mgr.os.path.expanduser", return_value=win_path):
-        assert resolve_target_dir("~/.config/opencode") == "/C/Users/songj/.config/opencode"
-
-
-def test_resolve_target_dir_msys_win_home_mixed_slash():
-    """expanduser may produce mixed-slash paths like C:\\Users\\name/.config/..."""
-    mixed = r"C:\Users\songj/.config/opencode"
-    with patch("ext_mgr.os.name", "posix"), \
-         patch("ext_mgr.os.path.expanduser", return_value=mixed):
-        assert resolve_target_dir("~/.config/opencode") == "/C/Users/songj/.config/opencode"
-
-
-def test_resolve_target_dir_native_windows_drive_to_posix():
-    """Drive paths convert to POSIX /C/ form regardless of os.name (Git Bash
-    consumes the result), so native Windows Python must convert too."""
-    win_path = r"C:\Users\songj\.config\opencode"
-    with patch("ext_mgr.os.name", "nt"), \
-         patch("ext_mgr.os.path.expanduser", return_value=win_path):
-        assert resolve_target_dir("~/.config/opencode") == "/C/Users/songj/.config/opencode"
-
-
-def test_resolve_target_dir_native_windows_mixed_slash_to_posix():
-    """expanduser('~/.config/opencode') under native Windows yields a mixed-slash
-    path; it must still convert to /C/ form (the reported bug)."""
+def test_resolve_target_dir_windows_normalizes_forward_slashes():
+    """Under native Windows (os.name=='nt'), expanduser produces mixed-slash
+    paths like C:\\Users\\name/.config/opencode; these must be normalized to
+    native backslash form C:\\Users\\name\\.config\\opencode."""
     mixed = r"C:\Users\songj/.config/opencode"
     with patch("ext_mgr.os.name", "nt"), \
          patch("ext_mgr.os.path.expanduser", return_value=mixed):
-        assert resolve_target_dir("~/.config/opencode") == "/C/Users/songj/.config/opencode"
+        assert resolve_target_dir("~/.config/opencode") == r"C:\Users\songj\.config\opencode"
 
 
-def test_resolve_target_dir_already_posix_drive():
-    """Already-converted /C/Users/... should pass through unchanged."""
-    with patch("ext_mgr.os.name", "posix"), \
-         patch("ext_mgr.os.path.expanduser", return_value="/C/Users/songj/.config/opencode"):
-        assert resolve_target_dir("/C/Users/songj/.config/opencode") == "/C/Users/songj/.config/opencode"
+def test_resolve_target_dir_windows_msys_drive_to_native():
+    """An MSYS-style /C/.. drive prefix must convert to native C:\\.. form
+    under Windows."""
+    msys = "/C/Users/songj/.config/opencode"
+    with patch("ext_mgr.os.name", "nt"), \
+         patch("ext_mgr.os.path.expanduser", return_value=msys):
+        assert resolve_target_dir("~/.config/opencode") == r"C:\Users\songj\.config\opencode"
 
 
-def test_to_posix_drive_path():
-    """Pure converter: drive paths -> /C/ POSIX; others unchanged; idempotent."""
-    assert _to_posix_drive_path(r"C:\Users\name\.config\opencode") == "/C/Users/name/.config/opencode"
-    assert _to_posix_drive_path("C:/Users/name") == "/C/Users/name"
-    # mixed separators as produced by expanduser under native Windows
-    assert _to_posix_drive_path(r"C:\Users\name/.config/opencode") == "/C/Users/name/.config/opencode"
-    # drive letter is upper-cased
-    assert _to_posix_drive_path(r"d:\foo\bar") == "/D/foo/bar"
-    # already-POSIX and non-drive paths pass through verbatim (idempotent)
-    assert _to_posix_drive_path("/C/Users/name") == "/C/Users/name"
-    assert _to_posix_drive_path("/home/user/.config") == "/home/user/.config"
-    assert _to_posix_drive_path("relative/path") == "relative/path"
-    # stray backslashes (e.g. os.path.join on Windows inserts one) are normalized
-    assert _to_posix_drive_path(
-        "/C/Users/songj/.config/opencode\\skills/skill-name"
-    ) == "/C/Users/songj/.config/opencode/skills/skill-name"
+def test_resolve_target_dir_windows_already_native():
+    """An already-native backslash path is returned unchanged on Windows."""
+    native = r"C:\Users\songj\.config\opencode"
+    with patch("ext_mgr.os.name", "nt"), \
+         patch("ext_mgr.os.path.expanduser", return_value=native):
+        assert resolve_target_dir("~/.config/opencode") == r"C:\Users\songj\.config\opencode"
+
+
+def test_to_windows_path():
+    """Pure converter. On Windows (os.name=='nt'): normalize / -> \\, convert
+    MSYS /C/ -> C:\\, upper-case drive letter; idempotent. On POSIX: no-op."""
+    with patch("ext_mgr.os.name", "nt"):
+        # already-native drive path: no-op
+        assert _to_windows_path(r"C:\Users\name\.config\opencode") == r"C:\Users\name\.config\opencode"
+        # mixed separators (expanduser output under native Windows) -> backslashes
+        assert _to_windows_path(r"C:\Users\name/.config/opencode") == r"C:\Users\name\.config\opencode"
+        # forward-slash drive path -> backslashes
+        assert _to_windows_path("C:/Users/name") == r"C:\Users\name"
+        # MSYS /C/ form (and lower-case drive) -> native, upper-cased
+        assert _to_windows_path("/c/Users/name") == r"C:\Users\name"
+        assert _to_windows_path("/C/Users/name/.config/opencode") == r"C:\Users\name\.config\opencode"
+        # forward slashes kept by os.path.join from the relative part are normalized
+        assert _to_windows_path(r"C:\proj\src\skills/a.md") == r"C:\proj\src\skills\a.md"
+    # on POSIX: no-op regardless of input (no conversion ever)
+    with patch("ext_mgr.os.name", "posix"):
+        assert _to_windows_path("/home/user/.config") == "/home/user/.config"
+        assert _to_windows_path(r"C:\Users\name") == r"C:\Users\name"
 
 
 def test_make_extensions_basic():

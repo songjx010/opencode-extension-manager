@@ -11,7 +11,7 @@
 - **可用性检查**：实时检测缺失依赖，缺失的扩展在界面中标记并禁止勾选
 - **隐藏扩展**：`visible: false` 的扩展不进入勾选列表，但仍参与依赖管理
 - **插件依赖安装**：使能 plugin 类型扩展时，自动在其 source 目录的 `package.json` 所在处执行 `npm install`，安装后校验依赖是否真正就绪，未就绪自动重试
-- **Windows / Git Bash 兼容**：盘符路径（`C:\...`）自动转换为 `/C/...` POSIX 形式；Windows 下跳过 `npm install`
+- **Windows / Git Bash 兼容**：Windows 下路径自动归一为原生反斜杠形式（`C:\Users\name\...`），便于原生 Python 的 `os.makedirs` / `os.symlink` 正确定位；Windows 下跳过 `npm install`
 
 ## 前置条件
 
@@ -210,7 +210,7 @@ python3 ext_mgr.py
 - 输入自定义路径后按 **OK** 确认
 - 按 **Cancel** 退出脚本
 - 输入为空时会提示「目标目录不能为空」并重新输入
-- Windows（含 Git Bash）下，盘符路径自动转换为 POSIX 形式（如 `C:\Users\name\.config\opencode` → `/C/Users/name/.config/opencode`）
+- Windows（含 Git Bash）下，`expanduser` 产生的混合分隔符路径（如 `C:\Users\name/.config/opencode`）自动归一为原生反斜杠形式 `C:\Users\name\.config\opencode`，使原生 Python 的 `os.makedirs` / `os.symlink` 能正确定位
 
 ### 2. 扩展分类主界面
 
@@ -255,11 +255,11 @@ python3 ext_mgr.py
 
 ### 6. 查看结果
 
-执行完成后弹出操作结果，按状态分组显示：
+执行完成后弹出操作结果，按状态分组显示。每行在状态后会附带 `detail`（如 `error` 时的 OS 错误信息、`skipped` 时的原因）：
 
 - `success`（成功创建/删除符号链接）
 - `skipped`（无需操作，如无路径依赖、或禁用时目标不存在）
-- `error`（系统错误）
+- `error`（系统错误，附带具体原因）
 
 ### 7. 配置回写
 
@@ -284,12 +284,18 @@ python3 ext_mgr.py
 
 ### Windows / Git Bash 路径处理
 
-在 Windows（`os.name == 'nt'`，含 Git Bash）下，创建/删除符号链接时 `source` 与 `target` 路径中的盘符前缀会自动转换为 Git Bash / MSYS2 识别的 POSIX 形式：
+脚本在 Git Bash 下调用的是原生 Windows Python（`os.name == 'nt'`），其 `os.makedirs` / `os.symlink` 只能识别原生 Windows 路径。因此 Windows 下所有路径会经 `_to_windows_path` 归一为**反斜杠形式**：
 
-- `C:\Users\name\proj\skills\x.md` → `/C/Users/name/proj/skills/x.md`
-- 已是 `/C/...` 形式的路径保持不变（转换幂等）
+- `expanduser` 的混合分隔符输出 `C:\Users\name/.config/opencode` → `C:\Users\name\.config\opencode`
+- MSYS / Git Bash 风格的盘符前缀 `/C/Users/name/proj` → `C:\Users\name\proj`（小写盘符会大写）
+- 已是原生反斜杠形式的路径保持不变（转换幂等）
+- Linux 下不做任何转换
 
-该转换与目标目录（`resolve_target_dir`）的处理一致。由于 `target` 到达符号链接管理器时通常已是 `/C/...` 形式，构造时会原样保留（避免 `os.path.abspath` 在原生 Windows 上把 `/C/...` 误解析为 `C:\C\...`）。
+`source` / `target` 在交给 `os.symlink` 前都会做同样的归一，确保 `os.path.join` 拼接时残留的正斜杠也被修正。
+
+### 符号链接的系统错误反馈
+
+`os.symlink`、`shutil.rmtree`、`os.unlink` 以及创建子目录用的 `os.makedirs` 均被 `try/except OSError` 包裹。任一失败都会产生一条 `error` 结果，并在结果界面把 `detail`（OS 错误信息，含相关路径）展示给用户，便于定位问题（如权限不足、路径被占用、目标盘只读等）。
 
 ### 插件依赖安装
 
