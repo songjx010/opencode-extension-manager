@@ -609,10 +609,14 @@ def test_create_symlink_already_exists_correct(tmp_path):
         }
     })
     results = mgr.apply_for_extension("brainstorming", exts, "create")
-    assert results[0]["status"] == "skipped"
+    # force-recreate: even an already-correct link is rebuilt -> SUCCESS
+    assert results[0]["status"] == "success"
+    link = os.path.join(target, "skills", "brainstorming.md")
+    assert os.path.islink(link)
+    assert os.readlink(link) == str(src_file)
 
 
-def test_create_symlink_conflict(tmp_path):
+def test_create_symlink_force_overwrites_conflict(tmp_path):
     source, target = _setup_dirs(tmp_path)
     (tmp_path / "target" / "skills").mkdir()
     conflict = tmp_path / "target" / "skills" / "brainstorming.md"
@@ -629,7 +633,37 @@ def test_create_symlink_conflict(tmp_path):
         }
     })
     results = mgr.apply_for_extension("brainstorming", exts, "create")
-    assert results[0]["status"] == "conflict"
+    # existing real file is removed and replaced by the symlink -> SUCCESS
+    assert results[0]["status"] == "success"
+    link = os.path.join(target, "skills", "brainstorming.md")
+    assert os.path.islink(link)
+
+
+def test_create_symlink_force_overwrites_mismatched_link(tmp_path):
+    source, target = _setup_dirs(tmp_path)
+    (tmp_path / "source" / "skills").mkdir()
+    src_file = tmp_path / "source" / "skills" / "brainstorming.md"
+    src_file.write_text("skill")
+    (tmp_path / "target" / "skills").mkdir()
+    other = tmp_path / "source" / "skills" / "other.md"
+    other.write_text("x")
+    os.symlink(str(other), os.path.join(target, "skills", "brainstorming.md"))
+    mgr = SymlinkManager(source, target)
+    exts = make_extensions_from_raw({
+        "brainstorming": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Brainstorm",
+            "depends": [
+                {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
+            ],
+        }
+    })
+    results = mgr.apply_for_extension("brainstorming", exts, "create")
+    # link pointing elsewhere is replaced -> SUCCESS, now points to correct source
+    assert results[0]["status"] == "success"
+    link = os.path.join(target, "skills", "brainstorming.md")
+    assert os.readlink(link) == str(src_file)
 
 
 def test_remove_symlink_success(tmp_path):
@@ -651,6 +685,51 @@ def test_remove_symlink_success(tmp_path):
         }
     })
     results = mgr.apply_for_extension("brainstorming", exts, "remove")
+    assert results[0]["status"] == "success"
+    assert not os.path.exists(os.path.join(target, "skills", "brainstorming.md"))
+
+
+def test_remove_symlink_force_removes_mismatched(tmp_path):
+    source, target = _setup_dirs(tmp_path)
+    (tmp_path / "source" / "skills").mkdir()
+    other = tmp_path / "source" / "skills" / "other.md"
+    other.write_text("x")
+    (tmp_path / "target" / "skills").mkdir()
+    os.symlink(str(other), os.path.join(target, "skills", "brainstorming.md"))
+    mgr = SymlinkManager(source, target)
+    exts = make_extensions_from_raw({
+        "brainstorming": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Brainstorm",
+            "depends": [
+                {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
+            ],
+        }
+    })
+    results = mgr.apply_for_extension("brainstorming", exts, "remove")
+    # force-remove: link pointing elsewhere is still removed -> SUCCESS
+    assert results[0]["status"] == "success"
+    assert not os.path.exists(os.path.join(target, "skills", "brainstorming.md"))
+
+
+def test_remove_symlink_force_removes_real_file(tmp_path):
+    source, target = _setup_dirs(tmp_path)
+    (tmp_path / "target" / "skills").mkdir()
+    (tmp_path / "target" / "skills" / "brainstorming.md").write_text("plain")
+    mgr = SymlinkManager(source, target)
+    exts = make_extensions_from_raw({
+        "brainstorming": {
+            "type": "skill",
+            "enabled": True,
+            "description": "Brainstorm",
+            "depends": [
+                {"source": "skills/brainstorming.md", "target": "skills/brainstorming.md"}
+            ],
+        }
+    })
+    results = mgr.apply_for_extension("brainstorming", exts, "remove")
+    # force-remove: a real file at the target is removed -> SUCCESS
     assert results[0]["status"] == "success"
     assert not os.path.exists(os.path.join(target, "skills", "brainstorming.md"))
 
@@ -1724,6 +1803,18 @@ def test_store_resolve_syncs_state():
 
 
 # ---------- NpmDependencyManager ----------
+
+def test_install_for_skipped_on_windows(tmp_path):
+    mgr = NpmDependencyManager(str(tmp_path))
+    exts = make_extensions({
+        "p": {"type": "plugin", "enabled": False,
+              "path_deps": [(str(tmp_path / "p"), "plugins/p")]},
+    })
+    with patch("ext_mgr.os.name", "nt"):
+        results = mgr.install_for(["p"], exts)
+    assert len(results) == 1
+    assert results[0]["status"] == Status.SKIPPED
+
 
 def test_npm_install_dir_source_success(tmp_path):
     pkg_dir = tmp_path / "myplugin"

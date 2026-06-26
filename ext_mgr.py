@@ -565,50 +565,36 @@ class SymlinkManager:
         source = os.path.join(self._source_dir, source_rel)
         target = os.path.join(self._target_dir, target_rel)
         self._ensure_subdir(os.path.dirname(target))
-        if os.path.islink(target):
-            existing = os.readlink(target)
-            if os.path.abspath(existing) == os.path.abspath(source):
-                log.debug("Symlink exists, skip: %s -> %s", target, source)
-                return {"name": target_rel, "status": Status.SKIPPED, "detail": ""}
-            log.warning("Symlink conflict at %s: already points to %s", target, existing)
-            return {"name": target_rel, "status": Status.CONFLICT,
-                    "detail": f"symlink already points to {existing}"}
-        if os.path.exists(target):
-            log.warning("Symlink conflict at %s: target path already exists", target)
-            return {"name": target_rel, "status": Status.CONFLICT,
-                    "detail": f"target path {target} already exists"}
         try:
+            if os.path.islink(target) or os.path.exists(target):
+                log.info("Removing existing path before (re)creating symlink: %s", target)
+                self._remove_existing(target)
             os.symlink(source, target)
-            log.info("Symlink created: %s -> %s", target, source)
+            log.info("Symlink (re)created: %s -> %s", target, source)
             return {"name": target_rel, "status": Status.SUCCESS, "detail": ""}
         except OSError as e:
             log.error("Failed to create symlink %s -> %s: %s", target, source, e)
             return {"name": target_rel, "status": Status.ERROR, "detail": str(e)}
 
     def _remove_symlink(self, source_rel, target_rel):
-        source = os.path.join(self._source_dir, source_rel)
         target = os.path.join(self._target_dir, target_rel)
-        if not os.path.islink(target):
-            if not os.path.exists(target):
-                log.debug("No symlink to remove: %s", target)
-                return {"name": target_rel, "status": Status.SKIPPED, "detail": ""}
-            log.warning("Remove conflict at %s: exists but is not a symlink", target)
-            return {"name": target_rel, "status": Status.CONFLICT,
-                    "detail": f"target path {target} exists but is not a symlink"}
-        existing = os.readlink(target)
-        if os.path.abspath(existing) != os.path.abspath(source):
-            log.warning(
-                "Remove conflict at %s: points to %s, not %s", target, existing, source
-            )
-            return {"name": target_rel, "status": Status.CONFLICT,
-                    "detail": f"symlink points to {existing}, not the expected target"}
+        if not os.path.islink(target) and not os.path.exists(target):
+            log.debug("No symlink to remove: %s", target)
+            return {"name": target_rel, "status": Status.SKIPPED, "detail": ""}
         try:
-            os.unlink(target)
+            self._remove_existing(target)
             log.info("Symlink removed: %s", target)
             return {"name": target_rel, "status": Status.SUCCESS, "detail": ""}
         except OSError as e:
             log.error("Failed to remove symlink %s: %s", target, e)
             return {"name": target_rel, "status": Status.ERROR, "detail": str(e)}
+
+    @staticmethod
+    def _remove_existing(target):
+        if os.path.isdir(target) and not os.path.islink(target):
+            shutil.rmtree(target)
+        else:
+            os.unlink(target)
 
     def _ensure_subdir(self, dir_path):
         os.makedirs(dir_path, exist_ok=True)
@@ -630,7 +616,13 @@ class NpmDependencyManager:
 
         npm install 退出码为 0 并不一定代表依赖真正写入磁盘，因此每次执行后
         会校验 node_modules；未通过校验或退出码非 0 时最多重试
-        MAX_INSTALL_RETRIES 次。超时与意外异常不重试。"""
+        MAX_INSTALL_RETRIES 次。超时与意外异常不重试。
+
+        Windows (os.name == 'nt') 下不执行 npm install，直接返回单条 SKIPPED。"""
+        if os.name == "nt":
+            log.info("Windows detected (os.name=nt); skipping npm install")
+            return [{"name": "npm install", "status": Status.SKIPPED,
+                     "detail": "skipped on Windows"}]
         install_dirs = self._collect_install_dirs(to_enable, extensions)
         if not install_dirs:
             return []
