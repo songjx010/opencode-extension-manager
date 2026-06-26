@@ -70,13 +70,16 @@ _WIN_DRIVE_RE = re.compile(r'^([A-Za-z]):[\\/](.*)')
 
 def _to_posix_drive_path(path):
     """Convert a Windows drive path (``C:\\...`` or ``C:/...``) to the POSIX
-    form (``/C/...``) recognized by Git Bash / MSYS2. Already-POSIX paths and
-    non-drive paths are returned unchanged; the conversion is idempotent.
+    form (``/C/...``) recognized by Git Bash / MSYS2, and normalize any stray
+    backslashes to forward slashes (``os.path.join`` on native Windows inserts
+    them even between already-POSIX segments, e.g. ``/C/...\\skills/x``).
+    Already-POSIX paths are returned unchanged; the conversion is idempotent.
     """
-    m = _WIN_DRIVE_RE.match(path)
+    posix = path.replace("\\", "/")
+    m = _WIN_DRIVE_RE.match(posix)
     if m:
-        return "/" + m.group(1).upper() + "/" + m.group(2).replace("\\", "/")
-    return path
+        return "/" + m.group(1).upper() + "/" + m.group(2)
+    return posix
 
 
 def resolve_target_dir(path):

@@ -1,16 +1,17 @@
 # opencode 扩展管理器
 
-一个 Linux 终端下的交互式扩展管理器，通过 `dialog` TUI 界面管理 opencode 扩展的启用/禁用。扩展以**符号链接**的形式安装到目标目录（默认 `~/.config/opencode`），无需复制文件，干净可逆。
+一个终端下的交互式扩展管理器，通过 `dialog` TUI 界面管理 opencode 扩展的启用/禁用。扩展以**符号链接**的形式安装到目标目录（默认 `~/.config/opencode`），无需复制文件，干净可逆。
 
 ## 特性
 
 - **TUI 勾选界面**：基于 `dialog` 的 checklist，按扩展分类（技能 / 智能体 / 命令编排 / 插件）分组管理
 - **依赖自动管理**：启用时递归展开扩展依赖，禁用时级联清理孤儿依赖
-- **符号链接安装**：以符号链接方式安装/卸载，不复制文件，支持冲突检测
+- **符号链接安装**：以符号链接方式安装/卸载，不复制文件；目标已存在时强制重建
 - **原子配置回写**：配置变更通过临时文件 + `os.replace` 原子写入，保证数据安全
 - **可用性检查**：实时检测缺失依赖，缺失的扩展在界面中标记并禁止勾选
 - **隐藏扩展**：`visible: false` 的扩展不进入勾选列表，但仍参与依赖管理
 - **插件依赖安装**：使能 plugin 类型扩展时，自动在其 source 目录的 `package.json` 所在处执行 `npm install`，安装后校验依赖是否真正就绪，未就绪自动重试
+- **Windows / Git Bash 兼容**：盘符路径（`C:\...`）自动转换为 `/C/...` POSIX 形式；Windows 下跳过 `npm install`
 
 ## 前置条件
 
@@ -198,6 +199,8 @@ opencode-extension-manager/
 python3 ext_mgr.py
 ```
 
+运行日志（DEBUG 级别，含启动、目标目录、每次勾选解析、符号链接创建/删除、npm 安装等）写入脚本同目录下的 `ext_mgr.log`（滚动文件，单文件 1MB、保留 3 个备份）。
+
 ## TUI 操作流程
 
 ### 1. 设置目标目录
@@ -207,6 +210,7 @@ python3 ext_mgr.py
 - 输入自定义路径后按 **OK** 确认
 - 按 **Cancel** 退出脚本
 - 输入为空时会提示「目标目录不能为空」并重新输入
+- Windows（含 Git Bash）下，盘符路径自动转换为 POSIX 形式（如 `C:\Users\name\.config\opencode` → `/C/Users/name/.config/opencode`）
 
 ### 2. 扩展分类主界面
 
@@ -254,8 +258,7 @@ python3 ext_mgr.py
 执行完成后弹出操作结果，按状态分组显示：
 
 - `success`（成功创建/删除符号链接）
-- `skipped`（无需操作，如无路径依赖或链接已正确）
-- `conflict`（目标路径冲突）
+- `skipped`（无需操作，如无路径依赖、或禁用时目标不存在）
 - `error`（系统错误）
 
 ### 7. 配置回写
@@ -278,6 +281,15 @@ python3 ext_mgr.py
 ### 禁用扩展
 
 仅删除该扩展自身 `depends` 中路径依赖对应的符号链接。级联禁用的扩展同样会删除其路径依赖的符号链接。**强制删除**：无论目标链接指向何处（或目标本身是普通文件/目录），一律删除；目标不存在时状态为 `skipped`。
+
+### Windows / Git Bash 路径处理
+
+在 Windows（`os.name == 'nt'`，含 Git Bash）下，创建/删除符号链接时 `source` 与 `target` 路径中的盘符前缀会自动转换为 Git Bash / MSYS2 识别的 POSIX 形式：
+
+- `C:\Users\name\proj\skills\x.md` → `/C/Users/name/proj/skills/x.md`
+- 已是 `/C/...` 形式的路径保持不变（转换幂等）
+
+该转换与目标目录（`resolve_target_dir`）的处理一致。由于 `target` 到达符号链接管理器时通常已是 `/C/...` 形式，构造时会原样保留（避免 `os.path.abspath` 在原生 Windows 上把 `/C/...` 误解析为 `C:\C\...`）。
 
 ### 插件依赖安装
 
@@ -392,14 +404,6 @@ python3 ext_mgr.py
 ```
 
 **解决**：`extensions` 下只允许 `skills`、`agents`、`commands`、`plugins` 四个键，将扩展移入对应分类组。
-
-### Q: 扩展安装失败（冲突）
-
-```
-目标路径 ~/.config/opencode/skills/xxx 已存在
-```
-
-**解决**：手动检查目标路径，移除已有文件后重新运行。
 
 ### Q: 循环依赖
 

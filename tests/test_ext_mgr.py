@@ -1670,6 +1670,10 @@ def test_to_posix_drive_path():
     assert _to_posix_drive_path("/C/Users/name") == "/C/Users/name"
     assert _to_posix_drive_path("/home/user/.config") == "/home/user/.config"
     assert _to_posix_drive_path("relative/path") == "relative/path"
+    # stray backslashes (e.g. os.path.join on Windows inserts one) are normalized
+    assert _to_posix_drive_path(
+        "/C/Users/songj/.config/opencode\\skills/skill-name"
+    ) == "/C/Users/songj/.config/opencode/skills/skill-name"
 
 
 def test_make_extensions_basic():
