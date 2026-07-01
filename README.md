@@ -303,6 +303,7 @@ python3 ext_mgr.py
 
 - 同一目录只安装一次（多个 `source` 指向同一目录时自动去重）
 - 仅 `plugin` 类型触发；其他类型即使存在 `package.json` 也不执行
+- **跨平台 npm 定位**：通过 `shutil.which("npm")` 解析 npm 的真实可执行路径后再调用（Windows 下解析到的 `npm.cmd`），而非直接执行 `npm`。这避免了 Windows 上 `CreateProcess` 不解析 `.cmd`/`.bat` 扩展名、导致 `subprocess` 报 `WinError 2 系统找不到指定的文件` 的问题；npm 未安装（`which` 返回空）时跳过安装并以 `ERROR` 呈现
 - **安装后校验**：`npm install` 退出码为 0 并不代表依赖真正写入磁盘，因此每次执行后会检查 `package.json` 中声明的 `dependencies` / `devDependencies` 是否确实存在于 `node_modules` 下（支持 `@scope/name` 形式）
 - **失败重试**：退出码非 0 或校验未通过时，最多重试 3 次（即最多 4 次尝试）。超时与意外异常不重试（超时已耗时过长），立即报错
 - 安装/校验失败（重试耗尽、超时、npm 未安装）非阻断：符号链接照常创建、`enabled` 照常写入，仅在结果界面以 `ERROR` 呈现
@@ -334,7 +335,7 @@ python3 ext_mgr.py
 |------|------|
 | `ConfigManager` | 加载 / 校验 / 保存 `extensions.json`，处理原子写入与 `extra` 未知字段保留 |
 | `SymlinkManager` | 创建 / 删除符号链接，返回带状态的结果列表 |
-| `NpmDependencyManager` | 使能 plugin 扩展时在其 source 目录的 package.json 所在处执行 `npm install`，安装后校验依赖并按需重试（最多 3 次） |
+| `NpmDependencyManager` | 使能 plugin 扩展时先通过 `shutil.which` 解析 npm 可执行路径（兼容 Windows 的 `npm.cmd`），再在其 source 目录的 package.json 所在处执行 `npm install`，安装后校验依赖并按需重试（最多 3 次） |
 | `Validator` | 编程式符号链接状态校验（独立工具，未接入 `main()` 运行时主循环） |
 
 ### TUI 层
