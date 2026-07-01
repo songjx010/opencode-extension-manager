@@ -43,7 +43,6 @@ TYPE_TO_GROUP = {v: k for k, v in GROUP_TO_TYPE.items()}
 class Status:
     SUCCESS = "success"
     SKIPPED = "skipped"
-    CONFLICT = "conflict"
     ERROR = "error"
     MISSING = "missing"
     BROKEN = "broken"
@@ -634,32 +633,26 @@ class NpmDependencyManager:
 
         npm install 退出码为 0 并不一定代表依赖真正写入磁盘，因此每次执行后
         会校验 node_modules；未通过校验或退出码非 0 时最多重试
-        MAX_INSTALL_RETRIES 次。超时与意外异常不重试。
-
-        Windows (os.name == 'nt') 下不执行 npm install，直接返回单条 SKIPPED。"""
-        # if os.name == "nt":
-        #     log.info("Windows detected (os.name=nt); skipping npm install")
-        #     return [{"name": "npm install", "status": Status.SKIPPED,
-        #              "detail": "skipped on Windows"}]
+        MAX_INSTALL_RETRIES 次。超时与意外异常不重试。"""
         install_dirs = self._collect_install_dirs(to_enable, extensions)
         if not install_dirs:
             return []
-        npm_available = shutil.which("npm") is not None
-        if not npm_available:
+        npm_bin = shutil.which("npm")
+        if not npm_bin:
             log.warning("npm not found on PATH; dependency installation will be skipped")
         results = []
         for pkg_dir in install_dirs:
             disp = self._display_path(pkg_dir)
-            if not npm_available:
+            if not npm_bin:
                 results.append({"name": disp, "status": Status.ERROR,
                                 "detail": "npm not installed, skipping dependency installation"})
                 continue
             if on_progress is not None:
                 on_progress(pkg_dir)
-            results.append(self._install_with_retry(pkg_dir, disp))
+            results.append(self._install_with_retry(pkg_dir, disp, npm_bin))
         return results
 
-    def _install_with_retry(self, pkg_dir, disp):
+    def _install_with_retry(self, pkg_dir, disp, npm_bin):
         """对单个目录执行 npm install，并在退出码为 0 后校验是否真正安装成功；
         未安装成功（退出码非 0 或校验失败）则最多重试 MAX_INSTALL_RETRIES 次。
         超时与意外异常视为不可重试，立即返回错误。"""
@@ -669,7 +662,7 @@ class NpmDependencyManager:
             log.info("npm install attempt %d/%d in %s", attempt, attempts, pkg_dir)
             try:
                 proc = subprocess.run(
-                    ["npm", "install"], cwd=pkg_dir,
+                    [npm_bin, "install"], cwd=pkg_dir,
                     capture_output=True, text=True,
                     timeout=self.NPM_INSTALL_TIMEOUT,
                 )

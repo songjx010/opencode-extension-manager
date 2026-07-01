@@ -11,7 +11,7 @@
 - **可用性检查**：实时检测缺失依赖，缺失的扩展在界面中标记并禁止勾选
 - **隐藏扩展**：`visible: false` 的扩展不进入勾选列表，但仍参与依赖管理
 - **插件依赖安装**：使能 plugin 类型扩展时，自动在其 source 目录的 `package.json` 所在处执行 `npm install`，安装后校验依赖是否真正就绪，未就绪自动重试
-- **Windows / Git Bash 兼容**：Windows 下路径自动归一为原生反斜杠形式（`C:\Users\name\...`），便于原生 Python 的 `os.makedirs` / `os.symlink` 正确定位；Windows 下跳过 `npm install`
+- **Windows / Git Bash 兼容**：Windows 下路径自动归一为原生反斜杠形式（`C:\Users\name\...`），便于原生 Python 的 `os.makedirs` / `os.symlink` 正确定位
 
 ## 前置条件
 
@@ -306,7 +306,6 @@ python3 ext_mgr.py
 - **安装后校验**：`npm install` 退出码为 0 并不代表依赖真正写入磁盘，因此每次执行后会检查 `package.json` 中声明的 `dependencies` / `devDependencies` 是否确实存在于 `node_modules` 下（支持 `@scope/name` 形式）
 - **失败重试**：退出码非 0 或校验未通过时，最多重试 3 次（即最多 4 次尝试）。超时与意外异常不重试（超时已耗时过长），立即报错
 - 安装/校验失败（重试耗尽、超时、npm 未安装）非阻断：符号链接照常创建、`enabled` 照常写入，仅在结果界面以 `ERROR` 呈现
-- **Windows 跳过**：`os.name == 'nt'`（含 Git Bash）下不执行 `npm install`，直接返回单条 `SKIPPED` 结果
 - 禁用插件时**不删除**已安装的 `node_modules`，保留依赖
 
 ## 架构
@@ -349,7 +348,7 @@ python3 ext_mgr.py
 
 | 组件 | 职责 |
 |------|------|
-| `Status` | 操作结果状态枚举（success / skipped / conflict / error / missing / broken / unexpected / ok） |
+| `Status` | 操作结果状态枚举（success / skipped / error / missing / broken / unexpected / ok） |
 | `Format` | `dialog` 颜色/样式转义常量 |
 | `GROUP_TO_TYPE` / `TYPE_TO_GROUP` | 分类组与扩展类型的双向映射 |
 

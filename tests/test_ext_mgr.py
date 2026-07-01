@@ -1919,16 +1919,23 @@ def test_store_resolve_syncs_state():
 
 # ---------- NpmDependencyManager ----------
 
-def test_install_for_skipped_on_windows(tmp_path):
-    mgr = NpmDependencyManager(str(tmp_path))
+def test_install_for_runs_on_windows(tmp_path):
+    pkg_dir = tmp_path / "myplugin"
+    pkg_dir.mkdir()
+    (pkg_dir / "package.json").write_text('{"name":"myplugin"}')
     exts = make_extensions({
-        "p": {"type": "plugin", "enabled": False,
-              "path_deps": [(str(tmp_path / "p"), "plugins/p")]},
+        "myplugin": {"type": "plugin", "enabled": False,
+                     "path_deps": [(str(pkg_dir), "plugins/myplugin")]},
     })
-    with patch("ext_mgr.os.name", "nt"):
-        results = mgr.install_for(["p"], exts)
+    mgr = NpmDependencyManager(str(tmp_path))
+    fake_proc = MagicMock(returncode=0, stderr="", stdout="")
+    with patch("ext_mgr.os.name", "nt"), \
+         patch("ext_mgr.subprocess.run", return_value=fake_proc) as mock_run, \
+         patch("ext_mgr.shutil.which", return_value="/usr/bin/npm"):
+        results = mgr.install_for(["myplugin"], exts)
     assert len(results) == 1
-    assert results[0]["status"] == Status.SKIPPED
+    assert results[0]["status"] == Status.SUCCESS
+    assert mock_run.call_count == 1
 
 
 def test_npm_install_dir_source_success(tmp_path):
